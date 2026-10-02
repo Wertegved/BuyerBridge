@@ -1,4 +1,3 @@
-const AUTH_TOKEN_KEY = 'buyerbridge_token';
 const DEFAULT_AUTH_REDIRECT = '/index.html';
 const PROTECTED_PATHS = ['/pages/dashboard.html', '/pages/buyers.html', '/pages/campaigns.html'];
 const AUTH_ONLY_PATHS = ['/pages/login.html', '/pages/signup.html', '/pages/forgot-password.html'];
@@ -127,15 +126,15 @@ function setBrandLinks() {
 }
 
 function isAuthenticated() {
-  return Boolean(localStorage.getItem(AUTH_TOKEN_KEY));
+  return document.cookie.split('; ').some((cookie) => cookie.startsWith('buyerbridge_session='));
 }
 
-function setAuthToken(token) {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+function setAuthToken() {
+  return null;
 }
 
 function clearAuthToken() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  document.cookie = 'buyerbridge_session=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
 }
 
 function renderAuthButtonGroup(container) {
@@ -194,30 +193,6 @@ function initializeHomeCtas() {
   });
 }
 
-function initializeWorkflowSteps() {
-  document.querySelectorAll('[data-workflow-step]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      event.preventDefault();
-
-      const targetMap = {
-        describe: '/pages/buyers.html',
-        discover: '/pages/buyers.html',
-        review: '/pages/buyers.html',
-        reach: '/pages/campaigns.html',
-      };
-
-      const destination = targetMap[link.dataset.workflowStep] || '/pages/buyers.html';
-
-      if (isAuthenticated()) {
-        window.location.href = resolveInternalToUrl(destination);
-        return;
-      }
-
-      window.location.href = buildProtectedRedirect(destination);
-    });
-  });
-}
-
 function handleProtectedPageAccess() {
   const currentPath = getCurrentAppPath();
 
@@ -271,8 +246,7 @@ async function handleLoginSubmit(event) {
   }
 
   try {
-    const response = await login({ email, password });
-    setAuthToken(response.token);
+    await login({ email, password });
     showNotice(notice, 'Login successful. Redirecting...', 'success');
     window.location.href = getSafeRedirectTarget(DEFAULT_AUTH_REDIRECT);
   } catch (error) {
@@ -303,8 +277,7 @@ async function handleSignupSubmit(event) {
   }
 
   try {
-    const response = await signup(payload);
-    setAuthToken(response.token);
+    await signup(payload);
     showNotice(notice, 'Account created successfully. Redirecting...', 'success');
     window.location.href = getSafeRedirectTarget(DEFAULT_AUTH_REDIRECT);
   } catch (error) {
@@ -333,7 +306,7 @@ async function handleForgotPasswordSubmit(event) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+function initializeBuyerBridgeAuth() {
   setBrandLinks();
   syncAuthActions();
   syncAuthLinkPreservation();
@@ -355,6 +328,10 @@ document.addEventListener('DOMContentLoaded', () => {
   if (forgotForm) {
     forgotForm.addEventListener('submit', handleForgotPasswordSubmit);
   }
+}
 
-  initializeWorkflowSteps();
-});
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeBuyerBridgeAuth);
+} else {
+  initializeBuyerBridgeAuth();
+}

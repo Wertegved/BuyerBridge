@@ -145,6 +145,7 @@ a:focus-visible {
 .nav-actions {
   display: flex;
   align-items: center;
+  justify-self: end;
   gap: 12px;
 }
 
@@ -224,75 +225,6 @@ a:focus-visible {
   margin: 0;
   font-size: 1.08rem;
   color: var(--muted);
-}
-
-.hero-flow {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 28px 0 24px;
-  align-items: stretch;
-}
-
-.workflow-item {
-  display: flex;
-}
-
-.workflow-step {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 8px;
-  padding: 18px 16px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-  box-shadow: 0 8px 22px rgba(24, 31, 28, 0.04);
-  cursor: pointer;
-  min-height: 112px;
-  text-decoration: none;
-}
-
-.workflow-step:hover {
-  border-color: rgba(30, 58, 52, 0.28);
-  transform: translateY(-1px);
-}
-
-.workflow-step:focus-visible {
-  box-shadow: 0 0 0 3px rgba(30, 58, 52, 0.14);
-}
-
-.step-number {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 42px;
-  padding: 6px 8px;
-  border-radius: 999px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.step-label {
-  font-size: 0.98rem;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.workflow-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--primary);
-  font-size: 1.3rem;
-  font-weight: 700;
 }
 
 .about-card,
@@ -551,6 +483,45 @@ a:focus-visible {
   font-size: clamp(2rem, 3vw, 2.8rem);
 }
 
+.contact-shell {
+  padding: 64px 0 80px;
+}
+
+.contact-card {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.contact-card h1 {
+  margin: 0 0 12px;
+  font-size: clamp(2.2rem, 3vw, 3rem);
+  letter-spacing: -0.04em;
+}
+
+.contact-card p {
+  color: var(--muted);
+  margin: 0 auto 18px;
+  max-width: 560px;
+}
+
+.contact-email {
+  display: inline-block;
+  margin: 10px 0 18px;
+  color: var(--primary);
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.contact-shell .button {
+  min-width: 180px;
+}
+
 .site-footer {
   border-top: 1px solid var(--border);
   background: #fff;
@@ -564,6 +535,13 @@ a:focus-visible {
   padding: 28px 0 18px;
   color: var(--muted);
   font-size: 0.96rem;
+}
+
+.footer-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
 }
 
 .footer-copy {
@@ -775,19 +753,6 @@ a:focus-visible {
   .stat-card,
   .auth-card {
     padding: 18px;
-  }
-
-  .hero-flow {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
-  .workflow-arrow {
-    display: none;
-  }
-
-  .workflow-step {
-    min-height: 88px;
   }
 
   .footer-wrap {

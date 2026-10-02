@@ -1,13 +1,12 @@
 const API_BASE_URL = 'http://localhost:8000';
-const AUTH_TOKEN_KEY = 'buyerbridge_token';
 
 function getAuthHeaders() {
-  const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {};
 }
 
 async function requestJson(url, options = {}) {
   const response = await fetch(url, {
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {}),
@@ -73,12 +72,6 @@ async function login(payload) {
 }
 
 async function logout() {
-  const token = localStorage.getItem(AUTH_TOKEN_KEY);
-  if (!token) {
-    localStorage.removeItem(AUTH_TOKEN_KEY);
-    return { status: 'ok' };
-  }
-
   try {
     await requestJson(`${API_BASE_URL}/api/auth/logout`, {
       method: 'POST',
@@ -88,7 +81,6 @@ async function logout() {
     console.warn('Logout request failed:', error.message);
   }
 
-  localStorage.removeItem(AUTH_TOKEN_KEY);
   return { status: 'ok' };
 }
 

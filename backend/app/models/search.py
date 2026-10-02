@@ -12,6 +12,7 @@ class Search(Base):
     __tablename__ = "searches"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
     product_category: Mapped[str] = mapped_column(String(200), nullable=False)
     product_description: Mapped[str] = mapped_column(Text, nullable=False)
     buyer_type: Mapped[str] = mapped_column(String(200), nullable=False)

@@ -23,6 +23,7 @@ def test_signup_and_login_success():
     payload = signup.json()
     assert payload['user']['email'] == 'test@example.com'
     assert 'token' in payload
+    assert 'buyerbridge_session' in signup.cookies
 
     login = client.post(
         '/api/auth/login',
@@ -33,6 +34,7 @@ def test_signup_and_login_success():
     )
     assert login.status_code == 200
     assert login.json()['user']['email'] == 'test@example.com'
+    assert 'buyerbridge_session' in login.cookies
 
 
 def test_signup_rejects_duplicate_email():
@@ -56,3 +58,8 @@ def test_signup_rejects_duplicate_email():
         },
     )
     assert response.status_code == 409
+
+
+def test_protected_route_requires_session_cookie():
+    response = client.get('/api/auth/me')
+    assert response.status_code == 401

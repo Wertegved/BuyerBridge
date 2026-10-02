@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database.connection import init_db
+from app.database.connection import check_database_connection, init_db
 from app.routes import auth, buyers, dashboard, email, search
 
 app = FastAPI(title="BuyerBridge", version="0.1.0")
@@ -20,6 +20,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup() -> None:
+    if not check_database_connection():
+        raise RuntimeError(
+            "BuyerBridge could not connect to PostgreSQL. Verify DATABASE_URL, the Postgres service, and that the database is running before starting the API."
+        )
     init_db()
 
 

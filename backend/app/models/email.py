@@ -12,7 +12,8 @@ class Email(Base):
     __tablename__ = "emails"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    buyer_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(nullable=False, index=True)
+    buyer_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
