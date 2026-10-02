@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Find Buyers | BuyerBridge</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link rel="stylesheet" href="../css/dashboard.css" />
+    <link rel="stylesheet" href="../css/responsive.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav-wrap">
+        <a class="brand brand-link" href="../index.html" data-brand-link aria-label="BuyerBridge home">
+          <span class="brand-mark">B</span>
+          <span>BuyerBridge</span>
+        </a>
+
+        <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" data-mobile-toggle>
+          Menu
+        </button>
+
+        <nav class="main-nav" aria-label="Main navigation">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" class="active" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" data-protected-nav>Campaigns</a>
+        </nav>
+
+        <div class="nav-actions" data-auth-actions>
+          <a class="button button-secondary" href="login.html">Login</a>
+          <a class="button button-primary" href="signup.html">Sign Up</a>
+        </div>
+      </div>
+
+      <div id="mobile-menu" class="mobile-menu" hidden>
+        <div class="container mobile-menu-panel">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" data-protected-nav>Campaigns</a>
+          <div class="mobile-auth-actions" data-mobile-auth>
+            <a class="button button-secondary" href="login.html">Login</a>
+            <a class="button button-primary" href="signup.html">Sign Up</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <section class="container panel layout-two">
+        <div class="panel-section">
+          <div class="page-heading">
+            <p class="eyebrow">Buyer discovery</p>
+            <h1>Find Potential Buyers</h1>
+          </div>
+
+          <form id="search-form" class="search-form" novalidate>
+            <div class="field-group">
+              <label for="product_category">Product Category</label>
+              <input id="product_category" name="product_category" type="text" value="Home Decor" placeholder="Example: Home Decor" required />
+            </div>
+
+            <div class="field-group">
+              <label for="product_description">Product Description</label>
+              <textarea id="product_description" name="product_description" rows="4" placeholder="Handmade decorative wall art suitable for modern residential interiors." required></textarea>
+            </div>
+
+            <div class="field-group">
+              <label for="buyer_type">Buyer Type</label>
+              <select id="buyer_type" name="buyer_type">
+                <option>Interior Designers</option>
+                <option>Interior Design Studios</option>
+                <option>Home Decor Stores</option>
+                <option>Furniture Stores</option>
+                <option>Home Staging Companies</option>
+                <option>Home Furnishing Retailers</option>
+                <option>Gift &amp; Home Stores</option>
+                <option>Other</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label for="location">Location</label>
+              <input id="location" name="location" type="text" value="New York, NY" placeholder="New York, NY" required />
+            </div>
+
+            <div class="field-group">
+              <label for="limit">Result Limit</label>
+              <select id="limit" name="limit">
+                <option value="10">10</option>
+                <option value="20" selected>20</option>
+                <option value="50">50</option>
+              </select>
+            </div>
+
+            <button class="button button-primary" type="submit">Find Buyers</button>
+          </form>
+        </div>
+
+        <div class="panel-section panel-alt" id="results-summary">
+          <div class="status-card">
+            <p class="eyebrow muted">Search status</p>
+            <h2>Ready to search</h2>
+            <p>Use the form to discover potential business buyers relevant to your product.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="container results-panel" aria-live="polite">
+        <div class="results-toolbar">
+          <div>
+            <p class="eyebrow muted">Potential buyers</p>
+            <h2 id="results-title">No results yet</h2>
+          </div>
+          <div class="toolbar-actions">
+            <button class="button button-secondary" type="button">Filter</button>
+            <button class="button button-secondary" type="button">Sort</button>
+            <button class="button button-primary" type="button">Select All</button>
+          </div>
+        </div>
+        <div id="results-container" class="results-grid"></div>
+      </section>
+    </main>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/buyers.js"></script>
+  </body>
+</html>

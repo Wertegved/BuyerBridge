@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard | BuyerBridge</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link rel="stylesheet" href="../css/dashboard.css" />
+    <link rel="stylesheet" href="../css/responsive.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav-wrap">
+        <a class="brand brand-link" href="../index.html" data-brand-link aria-label="BuyerBridge home">
+          <span class="brand-mark">B</span>
+          <span>BuyerBridge</span>
+        </a>
+
+        <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" data-mobile-toggle>
+          Menu
+        </button>
+
+        <nav class="main-nav" aria-label="Main navigation">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" class="active" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" data-protected-nav>Campaigns</a>
+        </nav>
+
+        <div class="nav-actions" data-auth-actions>
+          <a class="button button-secondary" href="login.html">Login</a>
+          <a class="button button-primary" href="signup.html">Sign Up</a>
+        </div>
+      </div>
+
+      <div id="mobile-menu" class="mobile-menu" hidden>
+        <div class="container mobile-menu-panel">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" data-protected-nav>Campaigns</a>
+          <div class="mobile-auth-actions" data-mobile-auth>
+            <a class="button button-secondary" href="login.html">Login</a>
+            <a class="button button-primary" href="signup.html">Sign Up</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="page-shell container">
+      <section class="page-heading">
+        <p class="eyebrow">Overview</p>
+        <h1>Dashboard</h1>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <span class="stat-label">Potential Leads</span>
+          <strong id="stat-leads">0</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Emails Sent</span>
+          <strong id="stat-emails">0</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Searches</span>
+          <strong id="stat-searches">0</strong>
+        </article>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="panel-section">
+          <h2>Recent Searches</h2>
+          <ul id="search-history" class="list-plain">
+            <li class="empty-state">No searches yet.</li>
+          </ul>
+        </article>
+
+        <article class="panel-section">
+          <h2>Recent Outreach</h2>
+          <ul id="email-history" class="list-plain">
+            <li class="empty-state">No outreach activity yet.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/dashboard.js"></script>
+  </body>
+</html>

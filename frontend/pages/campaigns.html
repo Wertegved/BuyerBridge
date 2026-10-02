@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Campaigns | BuyerBridge</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <link rel="stylesheet" href="../css/dashboard.css" />
+    <link rel="stylesheet" href="../css/responsive.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container nav-wrap">
+        <a class="brand brand-link" href="../index.html" data-brand-link aria-label="BuyerBridge home">
+          <span class="brand-mark">B</span>
+          <span>BuyerBridge</span>
+        </a>
+
+        <button class="mobile-menu-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" data-mobile-toggle>
+          Menu
+        </button>
+
+        <nav class="main-nav" aria-label="Main navigation">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" class="active" data-protected-nav>Campaigns</a>
+        </nav>
+
+        <div class="nav-actions" data-auth-actions>
+          <a class="button button-secondary" href="login.html">Login</a>
+          <a class="button button-primary" href="signup.html">Sign Up</a>
+        </div>
+      </div>
+
+      <div id="mobile-menu" class="mobile-menu" hidden>
+        <div class="container mobile-menu-panel">
+          <a href="../index.html" data-protected-nav>Home</a>
+          <a href="dashboard.html" data-protected-nav>Dashboard</a>
+          <a href="buyers.html" data-protected-nav>Find Buyers</a>
+          <a href="campaigns.html" data-protected-nav>Campaigns</a>
+          <div class="mobile-auth-actions" data-mobile-auth>
+            <a class="button button-secondary" href="login.html">Login</a>
+            <a class="button button-primary" href="signup.html">Sign Up</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="page-shell container">
+      <section class="page-heading">
+        <p class="eyebrow">Outreach</p>
+        <h1>Campaigns</h1>
+      </section>
+
+      <section class="panel-section">
+        <div class="empty-state-box">
+          <h2>No outreach campaign started yet.</h2>
+          <p>Choose a set of potential buyers and send a structured business introduction from the buyer discovery workflow.</p>
+          <a class="button button-primary" href="buyers.html">Start a Search</a>
+        </div>
+      </section>
+    </main>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/components.js"></script>
+    <script src="../js/campaigns.js"></script>
+  </body>
+</html>

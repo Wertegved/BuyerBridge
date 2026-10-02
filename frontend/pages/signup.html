@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign Up | BuyerBridge</title>
+    <meta name="description" content="Create your BuyerBridge account and start sharing outreach campaigns." />
+    <link rel="stylesheet" href="../css/style.css" />
+    <link rel="stylesheet" href="../css/responsive.css" />
+  </head>
+  <body>
+    <header class="site-header auth-header">
+      <div class="container auth-header-inner">
+        <a class="brand brand-link" href="../index.html" data-brand-link aria-label="BuyerBridge home">
+          <span class="brand-mark">B</span>
+          <span>BuyerBridge</span>
+        </a>
+      </div>
+    </header>
+
+    <main class="container auth-shell">
+      <section class="auth-card" aria-labelledby="signup-title">
+        <div class="auth-top">
+          <div class="brand" aria-label="BuyerBridge home">
+            <span class="brand-mark">B</span>
+            <span>BuyerBridge</span>
+          </div>
+          <h1 id="signup-title">Create your account</h1>
+          <p>Set up your workspace and build effective buyer lists.</p>
+        </div>
+
+        <form id="signup-form" class="auth-form" novalidate>
+          <div class="field-group">
+            <label for="signup-name">Full name</label>
+            <input id="signup-name" name="name" type="text" autocomplete="name" required />
+          </div>
+
+          <div class="field-group">
+            <label for="signup-email">Work email</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" required />
+          </div>
+
+          <div class="field-group">
+            <label for="signup-password">Password</label>
+            <input id="signup-password" name="password" type="password" autocomplete="new-password" required />
+          </div>
+
+          <div class="field-group">
+            <label for="signup-confirm-password">Confirm password</label>
+            <input id="signup-confirm-password" name="confirm_password" type="password" autocomplete="new-password" required />
+          </div>
+
+          <div data-auth-message class="auth-notice" aria-live="polite" hidden></div>
+
+          <button class="button button-primary" type="submit">Create account</button>
+        </form>
+
+        <p class="auth-footer">
+          Already have an account?
+          <a href="login.html" class="forgot-link" data-auth-link="login.html">Login</a>
+        </p>
+      </section>
+    </main>
+
+    <script src="../js/api.js"></script>
+    <script src="../js/auth.js"></script>
+    <script src="../js/components.js"></script>
+  </body>
+</html>
