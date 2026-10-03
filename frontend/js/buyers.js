@@ -147,11 +147,8 @@ function renderResults() {
           <span class="meta-row">${escapeHtml(buyer.category || 'Business type unavailable')}</span>
           <span class="meta-row">${escapeHtml(buyer.city || buyer.state || 'Location unavailable')}</span>
           <span class="meta-row">${escapeHtml(String(buyer.website || '').trim() || 'Website unavailable')}</span>
-          <span class="meta-row">${escapeHtml(String(buyer.phone || '').trim() || 'Phone unavailable')}</span>
           <span class="meta-row">${escapeHtml(
-            String(buyer.email || '').trim()
-              ? isEmailUsable(buyer.email) ? buyer.email : 'Invalid email'
-              : 'Email not available'
+            isEmailUsable(buyer.email) ? buyer.email : 'Email not available'
           )}</span>
         </div>
         <span class="lead-score">Lead Relevance ${escapeHtml(buyer.relevance_score || 0)} / 100</span>
@@ -201,7 +198,6 @@ function openBuyerDetails(buyer) {
     ['State', buyer.state],
     ['Country', buyer.country],
     ['Website', buyer.website],
-    ['Phone', buyer.phone],
     ['Email', isEmailUsable(buyer.email) ? buyer.email : null],
     ['Email availability', emailStatus],
     ['Source', buyer.source],
@@ -255,14 +251,7 @@ async function loadSavedBuyers() {
   restoreBuyerControls();
 
   const response = await getBuyers();
-  const allSavedBuyers = Array.isArray(response.buyers) ? response.buyers : [];
-  const displayedIds = readSessionValue(storageKey('displayedBuyerIds'), null);
-  if (Array.isArray(displayedIds)) {
-    const buyersById = new Map(allSavedBuyers.map((buyer) => [String(buyer.id), buyer]));
-    savedBuyers = displayedIds.map((id) => buyersById.get(String(id))).filter(Boolean);
-  } else {
-    savedBuyers = allSavedBuyers;
-  }
+  savedBuyers = Array.isArray(response.buyers) ? response.buyers : [];
   selectedBuyerIds = new Set(
     readSessionValue(storageKey('selectedBuyerIds'), []).map(String)
   );
@@ -388,7 +377,6 @@ form?.addEventListener('submit', async (event) => {
 
     resetBuyerSearchState();
     savedBuyers = currentResults;
-    writeSessionValue(storageKey('displayedBuyerIds'), savedBuyers.map((buyer) => String(buyer.id)));
     renderResults();
 
     const resultCount = savedBuyers.length;

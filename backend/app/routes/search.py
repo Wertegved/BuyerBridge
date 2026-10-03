@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmentService) -> dict:
     website = extract_osm_website(result) or result.get("website")
+    if website and not result.get("website"):
+        result["website"] = website
     domain = FindymailContactEnrichment._extract_domain(website)
     business_name = result.get("business_name") or "Business name unavailable"
     enrichment_input = {**result, "website": domain}
@@ -70,9 +72,27 @@ async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmen
     if email_returned:
         for field in ("email", "email_available", "contact_source"):
             result[field] = enriched[field]
-    if website and not result.get("website"):
-        result["website"] = website
     return result
+
+
+def serialize_persisted_buyer(buyer: Buyer, provider_id: str | None = None) -> dict:
+    return {
+        "id": str(buyer.id),
+        "provider_id": provider_id,
+        "business_name": buyer.business_name,
+        "website": buyer.website,
+        "email": buyer.email,
+        "email_available": buyer.email_available,
+        "contact_source": buyer.contact_source,
+        "phone": buyer.phone,
+        "category": buyer.category,
+        "address": buyer.address,
+        "city": buyer.city,
+        "state": buyer.state,
+        "country": buyer.country,
+        "source": buyer.source,
+        "relevance_score": buyer.relevance_score,
+    }
 
 
 @router.post("/search-buyers")
@@ -106,8 +126,17 @@ async def search_buyers(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
 
     contact_enrichment = ContactEnrichmentService(FindymailContactEnrichment())
+    final_results = []
     for index, result in enumerate(results):
         results[index] = await enrich_buyer_result(result, contact_enrichment)
+        result = results[index]
+        logger.info(
+            "Buyer ready for persistence: business_name=%s website=%s email=%s contact_source=%s",
+            result.get("business_name"),
+            result.get("website"),
+            result.get("email"),
+            result.get("contact_source"),
+        )
 
     search_record = SearchRecord(
         user_id=current_user.id,
@@ -132,28 +161,30 @@ async def search_buyers(
             website=result.get("website"),
             phone=result.get("phone"),
             email=result.get("email"),
-            email_available=bool(result.get("email_available")),
+            email_available=bool(result.get("email_available") or result.get("email")),
             source=result.get("source"),
             contact_source=result.get("contact_source"),
             relevance_score=result.get("relevance_score") or 0,
         )
         database.add(buyer)
         database.flush()
-        result.update(
-            {
-                "id": str(buyer.id),
-                "website": buyer.website,
-                "phone": buyer.phone,
-                "email": buyer.email,
-                "email_available": buyer.email_available,
-                "contact_source": buyer.contact_source,
-            }
+        persisted_result = serialize_persisted_buyer(
+            buyer,
+            provider_id=result.get("provider_id"),
         )
+        logger.info(
+            "Buyer persisted: business_name=%s website=%s email=%s contact_source=%s",
+            persisted_result["business_name"],
+            persisted_result["website"],
+            persisted_result["email"],
+            persisted_result["contact_source"],
+        )
+        final_results.append(persisted_result)
 
     database.commit()
 
     return {
         "status": "ok",
         "message": "Potential buyers found.",
-        "results": results,
+        "results": final_results,
     }

@@ -4,99 +4,119 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
+
+from app.database.tables import Base
 from app.models.buyer import Buyer
+from app.models.search import Search
 from app.routes.buyers import list_buyers
 from app.routes.search import search_buyers
 from app.schemas.search import SearchRequest
 
 
-class FakeDatabase:
-    def __init__(self):
-        self.objects = []
-        self.next_buyer_id = 500
-
-    def add(self, item):
-        self.objects.append(item)
-
-    def flush(self):
-        item = self.objects[-1]
-        if isinstance(item, Buyer):
-            self.next_buyer_id += 1
-            item.id = self.next_buyer_id
-
-    def commit(self):
-        pass
-
-
 class BuyerPersistenceFlowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_search_response_contains_persisted_buyer_id_and_final_contact_fields(self):
-        discovered = {
-            "provider_id": "osm:node:1",
-            "business_name": "Example Studio",
-            "category": "Interior Design",
-            "address": "1 Main Street",
-            "city": "New York",
-            "state": "NY",
-            "country": "United States",
-            "website": "https://example.com",
-            "phone": "+1 212 555 0100",
-            "email": None,
-            "email_available": False,
-            "source": "openstreetmap",
-            "contact_source": None,
-            "relevance_score": 85,
-        }
-        enrichment = AsyncMock()
-        enrichment.enrich.side_effect = _enriched
-        database = FakeDatabase()
-        location_resolver = SimpleNamespace(
-            resolve=AsyncMock(
-                return_value={"latitude": 40.7, "longitude": -74.0, "city": "New York"}
-            )
+    async def test_final_enriched_buyer_values_are_persisted_and_returned(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
         )
+        Base.metadata.create_all(engine)
+        try:
+            with Session(engine) as database:
+                discovered = {
+                    "provider_id": "osm:node:1",
+                    "business_name": "Example Studio",
+                    "category": "Interior Design",
+                    "address": "1 Main Street",
+                    "city": "New York",
+                    "state": "NY",
+                    "country": "United States",
+                    "website": "https://example.com",
+                    "phone": "+1 212 555 0100",
+                    "email": "osm@example.com",
+                    "email_available": True,
+                    "source": "openstreetmap",
+                    "contact_source": None,
+                    "relevance_score": 85,
+                }
 
-        with (
-            patch("app.routes.search.NominatimLocationResolver", return_value=location_resolver),
-            patch(
-                "app.routes.search.BusinessSearchService",
-                return_value=SimpleNamespace(search=AsyncMock(return_value=[discovered])),
-            ),
-            patch("app.routes.search.OverpassBusinessSearchProvider"),
-            patch("app.routes.search.ContactEnrichmentService", return_value=enrichment),
-            patch("app.routes.search.FindymailContactEnrichment"),
-        ):
-            response = await search_buyers(
-                SearchRequest(
-                    product_category="Furniture",
-                    product_description="Commercial furniture for design projects",
-                    buyer_type="Interior Designers",
-                    location="New York, NY",
-                    country="United States",
-                    limit=10,
-                ),
-                current_user=SimpleNamespace(id=7),
-                database=database,
-            )
+                async def enrich(buyer):
+                    buyer["email"] = "person@example.com"
+                    buyer["email_available"] = True
+                    buyer["contact_source"] = "findymail"
+                    return buyer
 
-        buyer = next(item for item in database.objects if isinstance(item, Buyer))
-        self.assertEqual(response["results"][0]["id"], str(buyer.id))
-        self.assertEqual(response["results"][0]["website"], buyer.website)
-        self.assertEqual(response["results"][0]["phone"], buyer.phone)
-        self.assertEqual(response["results"][0]["email"], buyer.email)
-        self.assertEqual(response["results"][0]["email"], "person@example.com")
-        self.assertTrue(response["results"][0]["email_available"])
-        self.assertEqual(response["results"][0]["contact_source"], "findymail")
+                enrichment = AsyncMock()
+                enrichment.enrich.side_effect = enrich
+                location_resolver = SimpleNamespace(
+                    resolve=AsyncMock(
+                        return_value={
+                            "latitude": 40.7,
+                            "longitude": -74.0,
+                            "city": "New York",
+                        }
+                    )
+                )
 
+                with (
+                    patch(
+                        "app.routes.search.NominatimLocationResolver",
+                        return_value=location_resolver,
+                    ),
+                    patch(
+                        "app.routes.search.BusinessSearchService",
+                        return_value=SimpleNamespace(
+                            search=AsyncMock(return_value=[discovered])
+                        ),
+                    ),
+                    patch("app.routes.search.OverpassBusinessSearchProvider"),
+                    patch(
+                        "app.routes.search.ContactEnrichmentService",
+                        return_value=enrichment,
+                    ),
+                    patch("app.routes.search.FindymailContactEnrichment"),
+                ):
+                    response = await search_buyers(
+                        SearchRequest(
+                            product_category="Furniture",
+                            product_description="Commercial furniture for design projects",
+                            buyer_type="Interior Designers",
+                            location="New York, NY",
+                            country="United States",
+                            limit=10,
+                        ),
+                        current_user=SimpleNamespace(id=7),
+                        database=database,
+                    )
 
-async def _enriched(buyer):
-    buyer["email"] = "person@example.com"
-    buyer["email_available"] = True
-    buyer["contact_source"] = "findymail"
-    return buyer
+                persisted = database.execute(select(Buyer)).scalar_one()
+                result = response["results"][0]
+                self.assertEqual(result["id"], str(persisted.id))
+                self.assertEqual(result["business_name"], "Example Studio")
+                self.assertEqual(result["website"], "https://example.com")
+                self.assertEqual(result["email"], "person@example.com")
+                self.assertTrue(result["email_available"])
+                self.assertEqual(result["contact_source"], "findymail")
+                self.assertEqual(result["phone"], "+1 212 555 0100")
+                self.assertEqual(result["category"], persisted.category)
+                self.assertEqual(result["address"], persisted.address)
+                self.assertEqual(result["city"], persisted.city)
+                self.assertEqual(result["state"], persisted.state)
+                self.assertEqual(result["country"], persisted.country)
+                self.assertEqual(result["source"], persisted.source)
+                self.assertEqual(result["relevance_score"], persisted.relevance_score)
+                self.assertEqual(persisted.website, "https://example.com")
+                self.assertEqual(persisted.email, "person@example.com")
+        finally:
+            Base.metadata.drop_all(engine)
+            engine.dispose()
 
 
 class BuyerIdFilterTests(unittest.IsolatedAsyncioTestCase):
-    async def test_buyers_endpoint_returns_only_requested_latest_buyer_records(self):
+    async def test_buyers_endpoint_returns_requested_records_with_latest_contact_fields(self):
         latest = SimpleNamespace(
             id=42,
             business_name="Latest Studio",
@@ -106,7 +126,7 @@ class BuyerIdFilterTests(unittest.IsolatedAsyncioTestCase):
             state="NY",
             country="United States",
             website="https://latest.example",
-            phone="+1 212 555 0101",
+            phone=None,
             email="latest@example.com",
             email_available=True,
             source="openstreetmap",
