@@ -11,6 +11,7 @@ from app.models.user import User
 from app.routes.auth import get_current_user
 from app.schemas.search import SearchRequest
 from app.services.business_search import BusinessSearchService, OverpassBusinessSearchProvider
+from app.services.contact_enrichment import ContactEnrichmentService, FindymailContactEnrichment
 from app.services.location import LocationResolutionError, NominatimLocationResolver
 
 router = APIRouter(prefix="/api")
@@ -45,6 +46,10 @@ async def search_buyers(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    contact_enrichment = ContactEnrichmentService(FindymailContactEnrichment())
+    for index, result in enumerate(results):
+        results[index] = await contact_enrichment.enrich(result)
 
     search_record = SearchRecord(
         user_id=current_user.id,
