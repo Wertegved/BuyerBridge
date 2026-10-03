@@ -62,32 +62,70 @@ async function loadDashboard() {
 const clearDataButton = document.getElementById('clear-all-data-button');
 const clearDataStatus = document.getElementById('clear-data-status');
 
-clearDataButton?.addEventListener('click', async () => {
-  const confirmed = window.confirm(
-    'Clear all of your search history, saved buyers from those searches, and outreach history? This cannot be undone.'
-  );
-  if (!confirmed) return;
+document.addEventListener('DOMContentLoaded', () => {
+  const clearDataButton = document.getElementById('clear-all-data-button');
+  const clearDataStatus = document.getElementById('clear-data-status');
 
-  clearDataButton.disabled = true;
-  clearDataStatus.className = '';
-  clearDataStatus.textContent = 'Clearing your data...';
-  try {
-    const user = await fetchCurrentUser();
-    await clearDashboardData();
-    sessionStorage.removeItem(`buyerbridge.selectedBuyerIds.${user.id}`);
-
-    if (await loadDashboard()) {
-      clearDataStatus.className = '';
-      clearDataStatus.textContent = 'Your search, buyer, and outreach data has been cleared.';
-    } else {
-      clearDataStatus.textContent = 'Your data was cleared, but the dashboard could not be refreshed. Reload the page to retry.';
-    }
-  } catch (error) {
-    clearDataStatus.textContent = error.message || 'Your data could not be cleared. Please try again.';
-    clearDataStatus.className = 'notice error';
-  } finally {
-    clearDataButton.disabled = false;
+  if (!clearDataButton) {
+    console.error('BuyerBridge: Clear All Data button not found.');
+    return;
   }
-});
 
+  clearDataButton.addEventListener('click', async (event) => {
+    event.preventDefault();
+
+    const confirmed = window.confirm(
+      'Clear all of your search history, saved buyers from those searches, and outreach history? This cannot be undone.'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    clearDataButton.disabled = true;
+
+    if (clearDataStatus) {
+      clearDataStatus.className = '';
+      clearDataStatus.textContent = 'Clearing your data...';
+    }
+
+    try {
+      const user = await fetchCurrentUser();
+
+      if (!user || !user.id) {
+        throw new Error('Authentication required. Please log in again.');
+      }
+
+      await clearDashboardData();
+
+      // Clear only frontend selection/UI state.
+      sessionStorage.removeItem(`buyerbridge.selectedBuyerIds.${user.id}`);
+
+      // Refresh dashboard data from backend.
+      const refreshed = await loadDashboard();
+
+      if (!refreshed) {
+        throw new Error(
+          'Your data was cleared, but the dashboard could not be refreshed. Please reload the page.'
+        );
+      }
+
+      if (clearDataStatus) {
+        clearDataStatus.className = 'notice success';
+        clearDataStatus.textContent =
+          'Your search, buyer, and outreach data has been cleared.';
+      }
+    } catch (error) {
+      console.error('BuyerBridge: Clear All Data failed:', error);
+
+      if (clearDataStatus) {
+        clearDataStatus.className = 'notice error';
+        clearDataStatus.textContent =
+          error?.message || 'Your data could not be cleared. Please try again.';
+      }
+    } finally {
+      clearDataButton.disabled = false;
+    }
+  });
+});
 loadDashboard();
