@@ -175,7 +175,7 @@ def build_overpass_query(buyer_type: str, location: dict[str, Any], limit: int) 
         south, north, west, east = [float(value) for value in bbox]
         return build_overpass_query_for_bbox(buyer_type, (south, west, north, east), limit)
 
-    radius = max(800, min(3000, int(limit * 250)))
+    radius = 3000
     tags = get_supported_tags(buyer_type)
     tag_clause = "\n".join([f"nwr[{tag}](around:{radius},{lat},{lon});" for tag in tags])
     max_results = max(8, min(limit, 25))
@@ -203,122 +203,85 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
         if latitude is None or longitude is None:
             raise ValueError("Location resolution did not produce usable coordinates.")
 
-        bbox = location.get("boundingbox") or []
-        if len(bbox) == 4:
-            tiles = split_bbox_into_tiles(bbox)
-            if len(tiles) > 1:
-                logger.info("Overpass buyer search using %s tiles for %s at %s", len(tiles), query, location.get("display_name"))
-        else:
-            tiles = [(float(latitude), float(longitude), float(latitude), float(longitude))]
-
+        location_without_boundingbox = {
+            key: value for key, value in location.items() if key != "boundingbox"
+        }
+        overpass_query = build_overpass_query(query, location_without_boundingbox, limit)
+        logger.info(
+            "Overpass buyer search around %s,%s for %s",
+            latitude,
+            longitude,
+            query,
+        )
         unique_businesses: list[dict] = []
         seen_provider_ids: set[str] = set()
-        tiles_attempted = 0
-        failed_tiles: list[str] = []
-        successful_tiles = 0
+        request_succeeded = False
 
-        async def process_tiles(tile_set: list[tuple[float, float, float, float]], label: str) -> bool:
-            nonlocal unique_businesses, seen_provider_ids, tiles_attempted, failed_tiles, successful_tiles
-            for tile_index, tile in enumerate(tile_set, start=1):
-                tiles_attempted += 1
-                tile_label = f"{label} tile {tile_index}/{len(tile_set)}"
-                tile_query = build_overpass_query_for_bbox(query, tile, limit=max(8, min(limit, 25)))
-                logger.info("Overpass request %s: %s", tile_label, tile)
-
-                try:
-                    async with httpx.AsyncClient(timeout=25.0, headers={"User-Agent": self.user_agent}) as client:
-                        response = await client.post(self.api_url, data=tile_query)
-                except httpx.RequestError as exc:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass request failed for %s: %s", tile_label, exc, exc_info=True)
-                    continue
-
-                if response.status_code == 429:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass request returned %s for %s", response.status_code, tile_label)
-                    return False
-                if response.status_code in {502, 503, 504}:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass server error %s for %s; skipping tile", response.status_code, tile_label)
-                    continue
-                if response.status_code >= 500:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass server error %s for %s", response.status_code, tile_label)
-                    return False
-                if response.status_code != 200:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass request status %s for %s", response.status_code, tile_label)
-                    continue
-
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": self.user_agent}) as client:
+                response = await client.post(self.api_url, data=overpass_query)
+        except httpx.RequestError as exc:
+            logger.warning("Overpass request failed for buyer search: %s", exc, exc_info=True)
+        else:
+            if response.status_code == 429:
+                logger.warning("Overpass request returned %s for buyer search", response.status_code)
+            elif response.status_code in {502, 503, 504}:
+                logger.warning("Overpass server error %s for buyer search", response.status_code)
+            elif response.status_code >= 500:
+                logger.warning("Overpass server error %s for buyer search", response.status_code)
+            elif response.status_code != 200:
+                logger.warning("Overpass request status %s for buyer search", response.status_code)
+            else:
                 try:
                     payload = response.json()
                 except ValueError as exc:
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass returned non-JSON for %s: %s", tile_label, exc, exc_info=True)
-                    continue
+                    logger.warning("Overpass returned non-JSON for buyer search: %s", exc, exc_info=True)
+                else:
+                    if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
+                        logger.warning("Overpass returned an invalid payload for buyer search")
+                    elif isinstance(payload.get("remark"), str) and "timeout" in payload["remark"].lower():
+                        logger.warning("Overpass query timed out for buyer search: %s", payload["remark"])
+                    else:
+                        request_succeeded = True
+                        for element in payload.get("elements", []):
+                            tags = element.get("tags") or {}
+                            name = normalize_name(tags.get("name") or tags.get("brand")) or "Business name unavailable"
+                            category = tags.get("shop") or tags.get("craft") or tags.get("amenity") or "Business"
+                            address = tags.get("addr:street")
+                            city = tags.get("addr:city") or location.get("city")
+                            state = tags.get("addr:state") or location.get("state")
+                            country = tags.get("addr:country") or "United States"
+                            website = tags.get("website") or tags.get("contact:website")
+                            phone = tags.get("phone") or tags.get("contact:phone")
+                            email = tags.get("email") or tags.get("contact:email")
 
-                if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
-                    failed_tiles.append(tile_label)
-                    logger.warning("Overpass returned an invalid payload for %s", tile_label)
-                    continue
+                            provider_id = f"osm:{element.get('type')}:{element.get('id')}"
+                            if provider_id in seen_provider_ids:
+                                continue
+                            seen_provider_ids.add(provider_id)
 
-                if isinstance(payload, dict) and isinstance(payload.get("remark"), str):
-                    remark = payload.get("remark", "")
-                    if "timeout" in remark.lower():
-                        failed_tiles.append(tile_label)
-                        logger.warning("Overpass query timed out for %s: %s", tile_label, remark)
-                        continue
-
-                successful_tiles += 1
-                nodes = payload.get("elements", [])
-                for element in nodes:
-                    tags = element.get("tags") or {}
-                    name = normalize_name(tags.get("name") or tags.get("brand")) or "Business name unavailable"
-                    category = tags.get("shop") or tags.get("craft") or tags.get("amenity") or "Business"
-                    address = tags.get("addr:street")
-                    city = tags.get("addr:city") or location.get("city")
-                    state = tags.get("addr:state") or location.get("state")
-                    country = tags.get("addr:country") or "United States"
-                    website = tags.get("website") or tags.get("contact:website")
-                    phone = tags.get("phone") or tags.get("contact:phone")
-                    email = tags.get("email") or tags.get("contact:email")
-
-                    provider_id = f"osm:{element.get('type')}:{element.get('id')}"
-                    if provider_id in seen_provider_ids:
-                        continue
-                    seen_provider_ids.add(provider_id)
-
-                    business = {
-                        "provider_id": provider_id,
-                        "business_name": name,
-                        "category": category.replace("_", " ").title(),
-                        "address": address or "Address unavailable",
-                        "city": city,
-                        "state": state,
-                        "country": country,
-                        "website": website,
-                        "phone": phone,
-                        "email": email,
-                        "email_available": bool(email),
-                        "source": "openstreetmap",
-                        "contact_source": None,
-                        "relevance_score": 0,
-                    }
-                    unique_businesses.append(business)
-
-                if len(deduplicate_businesses(unique_businesses)) >= limit:
-                    return True
-
-            return False
-
-        await process_tiles(tiles, "primary")
+                            business = {
+                                "provider_id": provider_id,
+                                "business_name": name,
+                                "category": category.replace("_", " ").title(),
+                                "address": address or "Address unavailable",
+                                "city": city,
+                                "state": state,
+                                "country": country,
+                                "website": website,
+                                "phone": phone,
+                                "email": email,
+                                "email_available": bool(email),
+                                "source": "openstreetmap",
+                                "contact_source": None,
+                                "relevance_score": 0,
+                            }
+                            unique_businesses.append(business)
 
         if not unique_businesses:
-            if successful_tiles:
+            if request_succeeded:
                 logger.info("Overpass returned no matching businesses for query %s", query)
                 return []
-            if failed_tiles:
-                logger.warning("All Overpass tiles failed for query %s: %s", query, failed_tiles)
             raise RuntimeError("We couldn't retrieve buyer results right now. Please try again.")
 
         deduped = deduplicate_businesses(unique_businesses)
