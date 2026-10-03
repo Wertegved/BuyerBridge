@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 import re
@@ -18,31 +17,40 @@ OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
-NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
-NOMINATIM_USER_AGENT = "BuyerBridge/1.0 (buyer discovery application)"
-NOMINATIM_SEARCH_PHRASES = {
+PHOTON_REVERSE_URL = "https://photon.komoot.io/reverse"
+PHOTON_USER_AGENT = "BuyerBridge/1.0 (buyer discovery application)"
+PHOTON_TAGS_BY_BUYER_TYPE = {
     "interior designers": (
-        "interior designer",
-        "interior design",
-        "interior decorator",
-        "interior decoration",
-        "design studio",
+        "craft:interior_design",
+        "office:interior_design",
+        "shop:furniture",
+        "shop:interior_decoration",
+        "shop:decor",
     ),
     "interior design studios": (
-        "interior design",
-        "interior designer",
-        "design studio",
+        "craft:interior_design",
+        "office:interior_design",
+        "shop:furniture",
+        "shop:interior_decoration",
     ),
-    "home decor": ("home decor", "interior decoration", "home furnishings", "furniture"),
-    "home decor stores": ("home decor", "interior decoration", "home furnishings", "furniture"),
-    "furniture stores": ("furniture", "furniture store", "home furnishings"),
-    "home furnishing retailers": ("home furnishings", "furniture", "home decor"),
-    "home staging companies": ("home staging", "interior design", "interior decorator"),
-    "interior architecture firms": ("interior architecture", "interior design", "design studio"),
-    "gift/home stores": ("home decor", "gift shop", "home furnishings"),
-    "gift & home stores": ("home decor", "gift shop", "home furnishings"),
-    "boutique home stores": ("home decor", "home furnishings", "furniture"),
-    "other": ("home decor", "furniture", "home furnishings"),
+    "furniture stores": ("shop:furniture", "shop:home_furniture"),
+    "home decor stores": (
+        "shop:decor",
+        "shop:interior_decoration",
+        "shop:gift",
+        "shop:home_furniture",
+        "shop:furniture",
+    ),
+    "home furnishing retailers": ("shop:home_furniture", "shop:furniture", "shop:decor"),
+    "home staging companies": (
+        "craft:interior_design",
+        "office:interior_design",
+        "shop:furniture",
+        "shop:home_furniture",
+    ),
+    "gift/home stores": ("shop:gift", "shop:decor", "shop:home_furniture"),
+    "gift & home stores": ("shop:gift", "shop:decor", "shop:home_furniture"),
+    "other": ("shop:furniture", "shop:home_furniture", "shop:decor", "shop:gift"),
 }
 
 
@@ -145,11 +153,6 @@ def score_business(business: dict, buyer_type: str, product_keywords: list[str])
 
 def get_supported_tags(buyer_type: str) -> list[str]:
     return BUYER_TYPE_TAG_MAP.get(buyer_type.lower(), BUYER_TYPE_TAG_MAP["other"])[:3]
-
-
-def get_nominatim_search_phrases(buyer_type: str) -> tuple[str, ...]:
-    normalized_buyer_type = buyer_type.strip().lower()
-    return NOMINATIM_SEARCH_PHRASES.get(normalized_buyer_type, (buyer_type.strip(),))
 
 
 def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float], tile_size: float | None = None) -> list[tuple[float, float, float, float]]:
@@ -344,32 +347,30 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
             break
 
         if not request_succeeded:
-            location_query = (
-                location.get("display_name")
-                or ", ".join(filter(None, [location.get("city"), location.get("state"), location.get("country")]))
+            buyer_type = query.strip().lower()
+            photon_tags = PHOTON_TAGS_BY_BUYER_TYPE.get(
+                buyer_type,
+                PHOTON_TAGS_BY_BUYER_TYPE["other"],
             )
-            for phrase_index, phrase in enumerate(get_nominatim_search_phrases(query)):
-                nominatim_query = f"{phrase} in {location_query}" if location_query else phrase
+            for osm_tag in photon_tags:
                 params = {
-                    "q": nominatim_query,
-                    "format": "jsonv2",
-                    "addressdetails": 1,
-                    "extratags": 1,
-                    "namedetails": 1,
+                    "lat": latitude,
+                    "lon": longitude,
+                    "radius": 50,
                     "limit": limit,
+                    "osm_tag": osm_tag,
                 }
-                if phrase_index:
-                    await asyncio.sleep(1)
-                logger.info("Attempting Nominatim buyer search: %s", nominatim_query)
+                logger.info("Attempting Photon reverse search for OSM tag %s", osm_tag)
                 try:
                     async with httpx.AsyncClient(
                         timeout=8.0,
-                        headers={"User-Agent": NOMINATIM_USER_AGENT},
+                        headers={"User-Agent": PHOTON_USER_AGENT},
                     ) as client:
-                        response = await client.get(NOMINATIM_SEARCH_URL, params=params)
+                        response = await client.get(PHOTON_REVERSE_URL, params=params)
                 except (httpx.HTTPError, TimeoutError) as exc:
                     logger.warning(
-                        "Nominatim buyer search failed with %s: %s",
+                        "Photon reverse search for %s failed with %s: %s",
+                        osm_tag,
                         type(exc).__name__,
                         exc,
                         exc_info=True,
@@ -378,80 +379,57 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
 
                 if response.status_code != 200:
                     logger.warning(
-                        "Nominatim buyer search returned HTTP status %s",
+                        "Photon reverse search for %s returned HTTP status %s",
+                        osm_tag,
                         response.status_code,
                     )
                     continue
 
                 try:
-                    nominatim_results = response.json()
+                    photon_payload = response.json()
                 except ValueError as exc:
-                    logger.warning("Nominatim returned invalid JSON: %s", exc, exc_info=True)
+                    logger.warning("Photon returned invalid JSON for %s: %s", osm_tag, exc, exc_info=True)
                     continue
 
-                if not isinstance(nominatim_results, list):
-                    logger.warning("Nominatim returned an invalid search response")
+                if not isinstance(photon_payload, dict) or not isinstance(photon_payload.get("features"), list):
+                    logger.warning("Photon returned an invalid response for %s", osm_tag)
                     continue
 
                 request_succeeded = True
-                for result in nominatim_results:
-                    if not isinstance(result, dict):
+                for feature in photon_payload["features"]:
+                    if not isinstance(feature, dict):
                         continue
-                    name_details = result.get("namedetails")
-                    if not isinstance(name_details, dict):
-                        name_details = {}
-                    name = normalize_name(
-                        result.get("name")
-                        or name_details.get("name")
-                        or name_details.get("name:en")
-                    )
-                    osm_type = result.get("osm_type")
-                    osm_id = result.get("osm_id")
-                    if not name:
+                    properties = feature.get("properties")
+                    if not isinstance(properties, dict):
                         continue
-
-                    address_details = result.get("address")
-                    if not isinstance(address_details, dict):
-                        address_details = {}
-                    extratags = result.get("extratags")
-                    if not isinstance(extratags, dict):
-                        extratags = {}
-                    house_number = address_details.get("house_number")
-                    road = (
-                        address_details.get("road")
-                        or address_details.get("pedestrian")
-                        or address_details.get("street")
-                    )
-                    address = " ".join(filter(None, [house_number, road]))
-                    address = address or result.get("display_name") or "Address unavailable"
-                    place_category = result.get("type") or result.get("category") or result.get("class")
-                    if not place_category and not result.get("display_name") and not result.get("lat"):
+                    name = normalize_name(properties.get("name"))
+                    osm_type = properties.get("osm_type")
+                    osm_id = properties.get("osm_id")
+                    if not name or not osm_type or osm_id is None:
                         continue
-                    provider_id = f"osm:{osm_type}:{osm_id}" if osm_type and osm_id else None
-                    city = (
-                        address_details.get("city")
-                        or address_details.get("town")
-                        or address_details.get("village")
-                        or address_details.get("municipality")
-                        or address_details.get("hamlet")
-                        or location.get("city")
-                    )
+                    house_number = properties.get("housenumber")
+                    street = properties.get("street")
+                    address = " ".join(filter(None, [house_number, street])) or None
+                    website = properties.get("website") or properties.get("contact:website")
+                    phone = properties.get("phone") or properties.get("contact:phone")
+                    email = properties.get("email") or properties.get("contact:email")
                     business = {
-                        "provider_id": provider_id,
+                        "provider_id": f"osm:{osm_type}:{osm_id}",
                         "business_name": name,
-                        "category": str(place_category or "Business").replace("_", " ").title(),
+                        "category": str(
+                            properties.get("osm_value")
+                            or properties.get("osm_key")
+                            or properties.get("type")
+                            or "Business"
+                        ).replace("_", " ").title(),
                         "address": address,
-                        "city": city,
-                        "state": address_details.get("state")
-                        or address_details.get("state_district")
-                        or location.get("state"),
-                        "country": address_details.get("country") or location.get("country"),
-                        "website": extratags.get("website") or extratags.get("contact:website"),
-                        "phone": extratags.get("phone") or extratags.get("contact:phone"),
-                        "email": extratags.get("email") or extratags.get("contact:email"),
-                        "email_available": bool(
-                            extratags.get("email") or extratags.get("contact:email")
-                        ),
+                        "city": properties.get("city"),
+                        "state": properties.get("state"),
+                        "country": properties.get("country"),
+                        "website": website,
+                        "phone": phone,
+                        "email": email,
+                        "email_available": bool(email),
                         "source": "openstreetmap",
                         "contact_source": None,
                         "relevance_score": 0,
