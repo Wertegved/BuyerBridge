@@ -13,11 +13,7 @@ from app.routes.auth import get_current_user
 router = APIRouter(prefix="/api")
 
 
-@router.get("/buyers")
-async def list_buyers(
-    current_user: User = Depends(get_current_user),
-    database: Session = Depends(get_db),
-):
+def get_buyers_for_user(database: Session, user_id: int) -> list[Buyer]:
     searches = database.execute(
         select(SearchRecord).order_by(SearchRecord.created_at.asc(), SearchRecord.id.asc())
     ).scalars().all()
@@ -25,7 +21,7 @@ async def list_buyers(
     buyers: list[Buyer] = []
     for index in range(len(searches) - 1, -1, -1):
         search = searches[index]
-        if search.user_id != current_user.id or search.result_count <= 0:
+        if search.user_id != user_id or search.result_count <= 0:
             continue
 
         buyer_query = select(Buyer).where(Buyer.created_at >= search.created_at)
@@ -37,6 +33,15 @@ async def list_buyers(
         ).scalars().all()
         buyers.extend(search_buyers)
 
+    return buyers
+
+
+@router.get("/buyers")
+async def list_buyers(
+    current_user: User = Depends(get_current_user),
+    database: Session = Depends(get_db),
+):
+    buyers = get_buyers_for_user(database, current_user.id)
     return {
         "buyers": [
             {

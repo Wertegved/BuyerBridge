@@ -42,6 +42,12 @@ async function getDashboardData() {
   return requestJson(`${API_BASE_URL}/api/dashboard`);
 }
 
+async function clearDashboardData() {
+  return requestJson(`${API_BASE_URL}/api/dashboard/data`, {
+    method: 'DELETE',
+  });
+}
+
 async function getSearchHistory() {
   return requestJson(`${API_BASE_URL}/api/search-history`);
 }

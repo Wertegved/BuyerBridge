@@ -1,16 +1,48 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
+from app.models.buyer import Buyer
 from app.models.email import Email
 from app.models.search import Search as SearchRecord
 from app.models.user import User
+from app.routes.buyers import get_buyers_for_user
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/api")
+
+
+@router.delete("/dashboard/data")
+async def clear_dashboard_data(
+    current_user: User = Depends(get_current_user),
+    database: Session = Depends(get_db),
+):
+    buyer_ids = {buyer.id for buyer in get_buyers_for_user(database, current_user.id)}
+
+    deleted_emails = database.execute(
+        delete(Email).where(Email.user_id == current_user.id)
+    ).rowcount or 0
+    deleted_buyers = 0
+    if buyer_ids:
+        deleted_buyers = database.execute(
+            delete(Buyer).where(Buyer.id.in_(buyer_ids))
+        ).rowcount or 0
+    deleted_searches = database.execute(
+        delete(SearchRecord).where(SearchRecord.user_id == current_user.id)
+    ).rowcount or 0
+    database.commit()
+
+    return {
+        "status": "ok",
+        "deleted": {
+            "searches": deleted_searches,
+            "buyers": deleted_buyers,
+            "emails": deleted_emails,
+        },
+    }
 
 
 @router.get("/search-history")
