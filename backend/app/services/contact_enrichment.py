@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class ContactEnrichmentProvider:
@@ -25,6 +28,7 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
     """
 
     API_URL = "https://app.findymail.com/api/search/domain"
+    COMPANY_API_URL = "https://app.findymail.com/api/search/company"
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.getenv("FINDYMAIL_API_KEY")
@@ -54,7 +58,7 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
 
         website = website.strip()
 
-        if not website:
+        if not website or any(character.isspace() for character in website):
             return None
 
         # Add a scheme when the stored website is like:
@@ -74,8 +78,43 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
             if domain.startswith("www."):
                 domain = domain[4:]
 
-            return domain or None
+            if "." not in domain or domain.startswith(".") or domain.endswith("."):
+                return None
+            return domain
 
+        except Exception:
+            return None
+
+    @classmethod
+    def _extract_returned_domain(cls, data: Any) -> str | None:
+        if not isinstance(data, dict):
+            return None
+
+        candidates = [data.get("domain"), data.get("website"), data.get("url")]
+        company = data.get("company")
+        if isinstance(company, dict):
+            candidates.extend([company.get("domain"), company.get("website"), company.get("url")])
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                domain = cls._extract_domain(candidate)
+                if domain:
+                    return domain
+        return None
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> Any:
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(url, headers=self._headers(), json=payload)
+            if response.status_code != 200:
+                return None
+            return response.json()
         except Exception:
             return None
 
@@ -89,7 +128,30 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
         domain = self._extract_domain(website)
 
         if not domain:
-            return business
+            business_name = self._get_value(business, "business_name")
+            if not isinstance(business_name, str) or not business_name.strip():
+                return business
+
+            try:
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    company_response = await client.post(
+                        self.COMPANY_API_URL,
+                        headers={
+                            "Authorization": f"Bearer {self.api_key}",
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                        },
+                        json={"name": business_name.strip()},
+                    )
+                if company_response.status_code != 200:
+                    return business
+                domain = self._extract_returned_domain(company_response.json())
+            except Exception:
+                return business
+
+            if not domain:
+                return business
+            self._set_value(business, "website", f"https://{domain}")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -105,6 +167,11 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
                 "CEO",
             ],
         }
+        logger.info(
+            "Findymail contact lookup for %s using domain %s",
+            self._get_value(business, "business_name") or "Business name unavailable",
+            domain,
+        )
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
@@ -125,10 +192,11 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
 
         try:
             contacts = data.get("contacts") if isinstance(data, dict) else None
-            if not isinstance(contacts, list) or not contacts:
-                return business
-
-            contact = contacts[0]
+            contact = (
+                contacts[0]
+                if isinstance(contacts, list) and contacts
+                else data.get("contact") if isinstance(data, dict) else None
+            )
             if not isinstance(contact, dict):
                 return business
 
@@ -143,6 +211,10 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
             self._set_value(business, "email", email)
             self._set_value(business, "email_available", True)
             self._set_value(business, "contact_source", "findymail")
+            logger.info(
+                "Findymail returned an email for %s",
+                self._get_value(business, "business_name") or "Business name unavailable",
+            )
         except Exception:
             return business
 

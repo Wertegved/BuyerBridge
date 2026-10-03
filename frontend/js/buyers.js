@@ -146,8 +146,13 @@ function renderResults() {
         <div class="result-meta">
           <span class="meta-row">${escapeHtml(buyer.category || 'Business type unavailable')}</span>
           <span class="meta-row">${escapeHtml(buyer.city || buyer.state || 'Location unavailable')}</span>
-          <span class="meta-row">${escapeHtml(buyer.website || 'Website unavailable')}</span>
-          <span class="meta-row">${escapeHtml(isEmailUsable(buyer.email) ? buyer.email : 'Email not available')}</span>
+          <span class="meta-row">${escapeHtml(String(buyer.website || '').trim() || 'Website unavailable')}</span>
+          <span class="meta-row">${escapeHtml(String(buyer.phone || '').trim() || 'Phone unavailable')}</span>
+          <span class="meta-row">${escapeHtml(
+            String(buyer.email || '').trim()
+              ? isEmailUsable(buyer.email) ? buyer.email : 'Invalid email'
+              : 'Email not available'
+          )}</span>
         </div>
         <span class="lead-score">Lead Relevance ${escapeHtml(buyer.relevance_score || 0)} / 100</span>
         <div class="result-actions">
@@ -382,13 +387,7 @@ form?.addEventListener('submit', async (event) => {
     const currentResults = Array.isArray(response.results) ? response.results : [];
 
     resetBuyerSearchState();
-    savedBuyers = [];
-    resultContainer.replaceChildren();
-    resultsTitle.textContent = 'Loading current search results...';
-
-    const savedResponse = await getBuyers();
-    const allSavedBuyers = Array.isArray(savedResponse.buyers) ? savedResponse.buyers : [];
-    savedBuyers = allSavedBuyers.slice(0, currentResults.length);
+    savedBuyers = currentResults;
     writeSessionValue(storageKey('displayedBuyerIds'), savedBuyers.map((buyer) => String(buyer.id)));
     renderResults();
 

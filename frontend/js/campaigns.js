@@ -114,6 +114,8 @@ function renderSelectedRecipients() {
     const details = document.createElement('div');
     const name = document.createElement('strong');
     name.textContent = buyer.business_name || 'Business name unavailable';
+    const website = document.createElement('small');
+    website.textContent = String(buyer.website || '').trim() || 'Website unavailable';
     const email = document.createElement('small');
     email.textContent = isUsableEmail(buyer.email) ? buyer.email : buyer.email ? 'Invalid email address' : 'Email not available';
     const removeButton = document.createElement('button');
@@ -122,7 +124,7 @@ function renderSelectedRecipients() {
     removeButton.textContent = 'Remove';
     removeButton.setAttribute('aria-label', `Remove ${name.textContent}`);
     removeButton.addEventListener('click', () => removeRecipient(String(buyer.id)));
-    details.append(name, email);
+    details.append(name, website, email);
     item.append(details, removeButton);
     selectedRecipients.append(item);
   });
@@ -165,7 +167,7 @@ async function initializeCampaigns() {
       return;
     }
 
-    const response = await getBuyers();
+    const response = await getBuyers(selectedIds);
     const selectedIdSet = new Set(selectedIds);
     const renderedIds = new Set();
     selectedBuyers = (response.buyers || []).filter((buyer) => {

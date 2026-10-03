@@ -60,8 +60,14 @@ async function getBuyerDetail(buyerId) {
   return requestJson(`${API_BASE_URL}/api/buyers/${buyerId}`);
 }
 
-async function getBuyers() {
-  return requestJson(`${API_BASE_URL}/api/buyers`);
+async function getBuyers(buyerIds = null) {
+  const query = new URLSearchParams();
+  if (Array.isArray(buyerIds)) {
+    buyerIds.forEach((id) => query.append('ids', String(id)));
+  }
+  const queryString = query.toString();
+  const suffix = queryString ? `?${queryString}` : '';
+  return requestJson(`${API_BASE_URL}/api/buyers${suffix}`);
 }
 
 async function sendEmail(payload) {

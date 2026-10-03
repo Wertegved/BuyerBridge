@@ -25,33 +25,35 @@ logger = logging.getLogger(__name__)
 
 
 async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmentService) -> dict:
-    website = extract_osm_website(result)
-    if website:
-        result["website"] = website
+    website = extract_osm_website(result) or result.get("website")
     domain = FindymailContactEnrichment._extract_domain(website)
-    if not domain or " " in domain or "." not in domain:
-        result["email"] = None
-        result["email_available"] = False
-        result["contact_source"] = None
-        logger.info(
-            "Findymail enrichment for %s: usable_domain=false, domain=none, email_returned=false",
-            result.get("business_name") or "Business name unavailable",
-        )
-        return result
-
     business_name = result.get("business_name") or "Business name unavailable"
-    logger.info(
-        "Findymail enrichment for %s: usable_domain=true, domain=%s",
-        business_name,
-        domain,
-    )
     enrichment_input = {**result, "website": domain}
+    if website and not domain:
+        enrichment_input["website"] = None
+
+    logger.info(
+        "Findymail enrichment for %s: usable_domain=%s, domain=%s",
+        business_name,
+        str(bool(domain)).lower(),
+        domain or "company lookup required",
+    )
     try:
         enriched = await enrichment_service.enrich(enrichment_input)
     except Exception:
         logger.exception("Findymail enrichment failed for %s", business_name)
         logger.info("Findymail enrichment for %s: email_returned=false", business_name)
         return result
+
+    returned_website = enriched.get("website") if isinstance(enriched, dict) else None
+    returned_domain = FindymailContactEnrichment._extract_domain(returned_website)
+    if returned_domain and not domain:
+        result["website"] = f"https://{returned_domain}"
+        logger.info(
+            "Findymail enrichment for %s: company_domain_found=%s",
+            business_name,
+            returned_domain,
+        )
 
     email = enriched.get("email") if isinstance(enriched, dict) else None
     email_returned = (
@@ -67,8 +69,9 @@ async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmen
     )
     if email_returned:
         for field in ("email", "email_available", "contact_source"):
-            if field in enriched:
-                result[field] = enriched[field]
+            result[field] = enriched[field]
+    if website and not result.get("website"):
+        result["website"] = website
     return result
 
 
@@ -129,13 +132,23 @@ async def search_buyers(
             website=result.get("website"),
             phone=result.get("phone"),
             email=result.get("email"),
-            email_available=bool(result.get("email")),
+            email_available=bool(result.get("email_available")),
             source=result.get("source"),
             contact_source=result.get("contact_source"),
             relevance_score=result.get("relevance_score") or 0,
         )
         database.add(buyer)
         database.flush()
+        result.update(
+            {
+                "id": str(buyer.id),
+                "website": buyer.website,
+                "phone": buyer.phone,
+                "email": buyer.email,
+                "email_available": buyer.email_available,
+                "contact_source": buyer.contact_source,
+            }
+        )
 
     database.commit()
 

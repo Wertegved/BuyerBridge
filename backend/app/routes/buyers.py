@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -38,10 +38,14 @@ def get_buyers_for_user(database: Session, user_id: int) -> list[Buyer]:
 
 @router.get("/buyers")
 async def list_buyers(
+    ids: list[str] | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     database: Session = Depends(get_db),
 ):
     buyers = get_buyers_for_user(database, current_user.id)
+    if ids is not None:
+        requested_ids = set(ids)
+        buyers = [buyer for buyer in buyers if str(buyer.id) in requested_ids]
     return {
         "buyers": [
             {

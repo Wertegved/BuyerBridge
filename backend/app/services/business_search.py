@@ -90,27 +90,30 @@ def normalize_name(value: str | None) -> str | None:
     return cleaned or None
 
 
-def extract_osm_website(tags: dict[str, Any]) -> str | None:
-    website_fields = ("website", "contact:website", "url", "contact:url")
-    for field in website_fields:
+def extract_osm_tag(tags: dict[str, Any], fields: tuple[str, ...]) -> str | None:
+    for field in fields:
         value = normalize_name(tags.get(field))
         if value:
             return value
 
     osm_tags = tags.get("osm_tags")
     if isinstance(osm_tags, dict):
-        for field in website_fields:
+        for field in fields:
             value = normalize_name(osm_tags.get(field))
             if value:
                 return value
     elif isinstance(osm_tags, list):
         for item in osm_tags:
-            if isinstance(item, dict) and item.get("key") in website_fields:
+            if isinstance(item, dict) and item.get("key") in fields:
                 value = normalize_name(item.get("value"))
                 if value:
                     return value
 
     return None
+
+
+def extract_osm_website(tags: dict[str, Any]) -> str | None:
+    return extract_osm_tag(tags, ("website", "contact:website", "url", "contact:url"))
 
 
 def deduplicate_businesses(rows: list[dict]) -> list[dict]:
@@ -342,8 +345,8 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                 state = tags.get("addr:state") or location.get("state")
                 country = tags.get("addr:country") or "United States"
                 website = extract_osm_website(tags)
-                phone = tags.get("phone") or tags.get("contact:phone")
-                email = tags.get("email") or tags.get("contact:email")
+                phone = extract_osm_tag(tags, ("phone", "contact:phone"))
+                email = extract_osm_tag(tags, ("email", "contact:email"))
 
                 provider_id = f"osm:{element.get('type')}:{element.get('id')}"
                 if provider_id in seen_provider_ids:
@@ -434,8 +437,8 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     street = properties.get("street")
                     address = " ".join(filter(None, [house_number, street])) or None
                     website = extract_osm_website(properties)
-                    phone = properties.get("phone") or properties.get("contact:phone")
-                    email = properties.get("email") or properties.get("contact:email")
+                    phone = extract_osm_tag(properties, ("phone", "contact:phone"))
+                    email = extract_osm_tag(properties, ("email", "contact:email"))
                     business = {
                         "provider_id": f"osm:{osm_type}:{osm_id}",
                         "business_name": name,
