@@ -65,6 +65,16 @@ function showRecipientWorkspace() {
   campaignWorkspace.hidden = false;
 }
 
+function updateSendButtonState() {
+  sendButton.disabled = isSending
+    || selectedBuyers.length === 0
+    || selectedBuyers.length !== selectedBuyerIds.length
+    || selectedBuyerIds.some(
+      (id) => !selectedBuyers.some((buyer) => String(buyer.id) === id)
+    )
+    || selectedBuyers.some((buyer) => !isUsableEmail(buyer.email));
+}
+
 function removeRecipient(id) {
   selectedBuyers = selectedBuyers.filter((buyer) => String(buyer.id) !== id);
   persistSelectedIds(selectedBuyerIds.filter((selectedId) => selectedId !== id));
@@ -74,7 +84,7 @@ function removeRecipient(id) {
     selectedRecipients.replaceChildren();
     recipientCount.textContent = '';
     emptyRecipientCount.textContent = '0 selected';
-    sendButton.disabled = true;
+    updateSendButtonState();
     return;
   }
   renderSelectedRecipients();
@@ -88,7 +98,7 @@ function clearRecipients() {
   selectedRecipients.replaceChildren();
   recipientCount.textContent = '';
   emptyRecipientCount.textContent = '0 selected';
-  sendButton.disabled = true;
+  updateSendButtonState();
 }
 
 function renderEmailHistory(emails) {
@@ -117,7 +127,7 @@ function renderSelectedRecipients() {
     const website = document.createElement('small');
     website.textContent = String(buyer.website || '').trim() || 'Website unavailable';
     const email = document.createElement('small');
-    email.textContent = isUsableEmail(buyer.email) ? buyer.email : buyer.email ? 'Invalid email address' : 'Email not available';
+    email.textContent = isUsableEmail(buyer.email) ? buyer.email : 'Email not available';
     const removeButton = document.createElement('button');
     removeButton.className = 'button button-secondary';
     removeButton.type = 'button';
@@ -131,10 +141,14 @@ function renderSelectedRecipients() {
 
   const sendableCount = selectedBuyers.filter((buyer) => isUsableEmail(buyer.email)).length;
   recipientCount.textContent = `${selectedBuyers.length} selected · ${sendableCount} with a valid email address`;
-  if (sendableCount === 0) {
-    setCampaignStatus('No selected recipients have a usable email address. Nothing will be sent.');
+  if (sendableCount !== selectedBuyers.length) {
+    setCampaignStatus('Every selected recipient must have a valid email address before sending.');
+  } else if (
+    campaignStatus.textContent === 'Every selected recipient must have a valid email address before sending.'
+  ) {
+    setCampaignStatus('');
   }
-  sendButton.disabled = isSending || sendableCount === 0;
+  updateSendButtonState();
 }
 
 function campaignErrorMessage(error) {
@@ -153,47 +167,64 @@ async function loadEmailHistory() {
   }
 }
 
+async function refreshSelectedRecipients() {
+  const selectedIds = selectedIdsStorageKey
+    ? readSelectedIds(selectedIdsStorageKey.slice(campaignStoragePrefix.length))
+    : [];
+  selectedBuyerIds = selectedIds;
+  if (!selectedIds.length) {
+    selectedBuyers = [];
+    campaignEmptyState.hidden = false;
+    campaignWorkspace.hidden = true;
+    selectedRecipients.replaceChildren();
+    recipientCount.textContent = '';
+    emptyRecipientCount.textContent = '0 selected';
+    updateSendButtonState();
+    return;
+  }
+
+  const response = await getBuyers(selectedIds);
+  const selectedIdSet = new Set(selectedIds);
+  const renderedIds = new Set();
+  selectedBuyers = (response.buyers || []).filter((buyer) => {
+    const id = String(buyer.id);
+    if (!selectedIdSet.has(id) || renderedIds.has(id)) return false;
+    renderedIds.add(id);
+    return true;
+  });
+  showRecipientWorkspace();
+  renderSelectedRecipients();
+}
+
 async function initializeCampaigns() {
   loadEmailHistory();
 
   try {
     const user = await fetchCurrentUser();
     selectedIdsStorageKey = `${campaignStoragePrefix}${user.id}`;
-    const selectedIds = readSelectedIds(user.id);
-    selectedBuyerIds = selectedIds;
-    if (!selectedIds.length) {
-      campaignEmptyState.hidden = false;
-      campaignWorkspace.hidden = true;
-      return;
-    }
-
-    const response = await getBuyers(selectedIds);
-    const selectedIdSet = new Set(selectedIds);
-    const renderedIds = new Set();
-    selectedBuyers = (response.buyers || []).filter((buyer) => {
-      const id = String(buyer.id);
-      if (!selectedIdSet.has(id) || renderedIds.has(id)) return false;
-      renderedIds.add(id);
-      return true;
-    });
-    if (!selectedBuyers.length) {
-      campaignEmptyState.hidden = false;
-      campaignWorkspace.hidden = true;
-      return;
-    }
-
-    showRecipientWorkspace();
-    renderSelectedRecipients();
+    await refreshSelectedRecipients();
   } catch (error) {
     campaignEmptyState.hidden = true;
     campaignWorkspace.hidden = false;
     recipientCount.textContent = 'Selected recipients could not be loaded.';
     selectedRecipients.replaceChildren();
-    sendButton.disabled = true;
+    updateSendButtonState();
     const message = campaignErrorMessage(error);
     setCampaignStatus(message, 'notice error');
   }
 }
+
+window.addEventListener('pageshow', async (event) => {
+  if (!event.persisted || !selectedIdsStorageKey) return;
+  try {
+    await refreshSelectedRecipients();
+  } catch (error) {
+    selectedBuyers = [];
+    selectedRecipients.replaceChildren();
+    updateSendButtonState();
+    setCampaignStatus(campaignErrorMessage(error), 'notice error');
+  }
+});
 
 addMoreRecipientsButton?.addEventListener('click', () => {
   window.location.href = 'buyers.html';
@@ -205,14 +236,20 @@ campaignForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const subject = campaignForm.elements.subject.value.trim();
   const message = campaignForm.elements.message.value.trim();
-  const recipients = selectedBuyers.filter((buyer) => isUsableEmail(buyer.email));
 
   if (!subject || subject.length < 3 || !message || message.length < 10) {
     setCampaignStatus('Enter a subject of at least 3 characters and a message of at least 10 characters.', 'notice error');
     return;
   }
-  if (!recipients.length) {
-    setCampaignStatus('No selected recipients have a usable email address. Nothing will be sent.', 'notice error');
+  if (
+    !selectedBuyers.length
+    || selectedBuyers.length !== selectedBuyerIds.length
+    || selectedBuyerIds.some(
+      (id) => !selectedBuyers.some((buyer) => String(buyer.id) === id)
+    )
+    || selectedBuyers.some((buyer) => !isUsableEmail(buyer.email))
+  ) {
+    setCampaignStatus('Every selected recipient must have a valid email address before sending.', 'notice error');
     return;
   }
 
@@ -221,7 +258,7 @@ campaignForm?.addEventListener('submit', async (event) => {
   setCampaignStatus('Sending email to selected recipients...');
   try {
     const response = await sendEmail({
-      buyer_ids: recipients.map((buyer) => String(buyer.id)),
+      buyer_ids: selectedBuyerIds,
       subject,
       message,
     });
