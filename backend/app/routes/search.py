@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -10,24 +12,63 @@ from app.models.search import Search as SearchRecord
 from app.models.user import User
 from app.routes.auth import get_current_user
 from app.schemas.search import SearchRequest
-from app.services.business_search import BusinessSearchService, OverpassBusinessSearchProvider
+from app.services.business_search import (
+    BusinessSearchService,
+    OverpassBusinessSearchProvider,
+    extract_osm_website,
+)
 from app.services.contact_enrichment import ContactEnrichmentService, FindymailContactEnrichment
 from app.services.location import LocationResolutionError, NominatimLocationResolver
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 
 async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmentService) -> dict:
-    website = result.get("website")
+    website = extract_osm_website(result)
+    if website:
+        result["website"] = website
     domain = FindymailContactEnrichment._extract_domain(website)
     if not domain or " " in domain or "." not in domain:
+        result["email"] = None
+        result["email_available"] = False
+        result["contact_source"] = None
+        logger.info(
+            "Findymail enrichment for %s: usable_domain=false, domain=none, email_returned=false",
+            result.get("business_name") or "Business name unavailable",
+        )
         return result
 
+    business_name = result.get("business_name") or "Business name unavailable"
+    logger.info(
+        "Findymail enrichment for %s: usable_domain=true, domain=%s",
+        business_name,
+        domain,
+    )
     enrichment_input = {**result, "website": domain}
-    enriched = await enrichment_service.enrich(enrichment_input)
-    for field in ("email", "email_available", "contact_source"):
-        if field in enriched:
-            result[field] = enriched[field]
+    try:
+        enriched = await enrichment_service.enrich(enrichment_input)
+    except Exception:
+        logger.exception("Findymail enrichment failed for %s", business_name)
+        logger.info("Findymail enrichment for %s: email_returned=false", business_name)
+        return result
+
+    email = enriched.get("email") if isinstance(enriched, dict) else None
+    email_returned = (
+        isinstance(email, str)
+        and bool(email.strip())
+        and "@" in email
+        and enriched.get("contact_source") == "findymail"
+    )
+    logger.info(
+        "Findymail enrichment for %s: email_returned=%s",
+        business_name,
+        str(email_returned).lower(),
+    )
+    if email_returned:
+        for field in ("email", "email_available", "contact_source"):
+            if field in enriched:
+                result[field] = enriched[field]
     return result
 
 
