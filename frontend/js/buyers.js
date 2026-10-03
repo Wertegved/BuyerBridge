@@ -258,9 +258,8 @@ async function loadSavedBuyers() {
   } else {
     savedBuyers = allSavedBuyers;
   }
-  const availableIds = new Set(savedBuyers.map((buyer) => String(buyer.id || '')).filter(Boolean));
   selectedBuyerIds = new Set(
-    readSessionValue(storageKey('selectedBuyerIds'), []).map(String).filter((id) => availableIds.has(id))
+    readSessionValue(storageKey('selectedBuyerIds'), []).map(String)
   );
   persistSelection();
   renderResults();
@@ -268,7 +267,6 @@ async function loadSavedBuyers() {
 }
 
 function resetBuyerSearchState() {
-  selectedBuyerIds = new Set();
   if (filterText) filterText.value = '';
   if (emailFilter) emailFilter.value = 'all';
   if (websiteFilter) websiteFilter.value = 'all';

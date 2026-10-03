@@ -127,10 +127,29 @@
   background: var(--surface-alt);
 }
 
+.campaign-recipient-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+#selected-recipients > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .campaign-recipient-list small,
 .email-history-list small {
   display: block;
   color: var(--muted);
+}
+
+#selected-recipients > li > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .campaign-compose-form {

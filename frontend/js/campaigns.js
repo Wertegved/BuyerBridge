@@ -1,15 +1,20 @@
 const campaignStoragePrefix = 'buyerbridge.selectedBuyerIds.';
 const campaignEmptyState = document.getElementById('campaign-empty-state');
 const campaignWorkspace = document.getElementById('campaign-workspace');
+const emptyRecipientCount = document.getElementById('empty-recipient-count');
 const recipientCount = document.getElementById('recipient-count');
 const selectedRecipients = document.getElementById('selected-recipients');
+const addMoreRecipientsButton = document.getElementById('add-more-recipients');
+const clearAllRecipientsButton = document.getElementById('clear-all-recipients');
 const campaignForm = document.getElementById('campaign-compose-form');
 const campaignStatus = document.getElementById('campaign-status');
 const sendButton = document.getElementById('send-campaign-button');
 const emailHistoryList = document.getElementById('email-history-list');
 
 let selectedBuyers = [];
+let selectedBuyerIds = [];
 let isSending = false;
+let selectedIdsStorageKey = '';
 
 function isUsableEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
@@ -29,15 +34,61 @@ function readSelectedIds(userId) {
   try {
     const raw = sessionStorage.getItem(`${campaignStoragePrefix}${userId}`);
     const value = raw ? JSON.parse(raw) : [];
-    return Array.isArray(value) ? value.map(String) : [];
+    return Array.isArray(value) ? [...new Set(value.map(String))] : [];
   } catch (error) {
     return [];
+  }
+}
+
+function persistSelectedIds(ids) {
+  try {
+    selectedBuyerIds = [...new Set(ids.map(String))];
+    if (selectedBuyerIds.length) {
+      sessionStorage.setItem(selectedIdsStorageKey, JSON.stringify(selectedBuyerIds));
+    } else {
+      sessionStorage.removeItem(selectedIdsStorageKey);
+    }
+    return true;
+  } catch (error) {
+    setCampaignStatus('Recipient changes could not be saved in this session. Please keep this page open.', 'notice error');
+    return false;
   }
 }
 
 function setCampaignStatus(message, type = '') {
   campaignStatus.textContent = message;
   campaignStatus.className = type;
+}
+
+function showRecipientWorkspace() {
+  campaignEmptyState.hidden = true;
+  campaignWorkspace.hidden = false;
+}
+
+function removeRecipient(id) {
+  selectedBuyers = selectedBuyers.filter((buyer) => String(buyer.id) !== id);
+  persistSelectedIds(selectedBuyerIds.filter((selectedId) => selectedId !== id));
+  if (!selectedBuyers.length) {
+    campaignWorkspace.hidden = true;
+    campaignEmptyState.hidden = false;
+    selectedRecipients.replaceChildren();
+    recipientCount.textContent = '';
+    emptyRecipientCount.textContent = '0 selected';
+    sendButton.disabled = true;
+    return;
+  }
+  renderSelectedRecipients();
+}
+
+function clearRecipients() {
+  selectedBuyers = [];
+  persistSelectedIds([]);
+  campaignWorkspace.hidden = true;
+  campaignEmptyState.hidden = false;
+  selectedRecipients.replaceChildren();
+  recipientCount.textContent = '';
+  emptyRecipientCount.textContent = '0 selected';
+  sendButton.disabled = true;
 }
 
 function renderEmailHistory(emails) {
@@ -55,14 +106,24 @@ function renderEmailHistory(emails) {
 }
 
 function renderSelectedRecipients() {
+  addMoreRecipientsButton.hidden = selectedBuyers.length === 0;
+  clearAllRecipientsButton.hidden = selectedBuyers.length === 0;
   selectedRecipients.replaceChildren();
   selectedBuyers.forEach((buyer) => {
     const item = document.createElement('li');
+    const details = document.createElement('div');
     const name = document.createElement('strong');
     name.textContent = buyer.business_name || 'Business name unavailable';
     const email = document.createElement('small');
     email.textContent = isUsableEmail(buyer.email) ? buyer.email : buyer.email ? 'Invalid email address' : 'Email not available';
-    item.append(name, email);
+    const removeButton = document.createElement('button');
+    removeButton.className = 'button button-secondary';
+    removeButton.type = 'button';
+    removeButton.textContent = 'Remove';
+    removeButton.setAttribute('aria-label', `Remove ${name.textContent}`);
+    removeButton.addEventListener('click', () => removeRecipient(String(buyer.id)));
+    details.append(name, email);
+    item.append(details, removeButton);
     selectedRecipients.append(item);
   });
 
@@ -95,7 +156,9 @@ async function initializeCampaigns() {
 
   try {
     const user = await fetchCurrentUser();
+    selectedIdsStorageKey = `${campaignStoragePrefix}${user.id}`;
     const selectedIds = readSelectedIds(user.id);
+    selectedBuyerIds = selectedIds;
     if (!selectedIds.length) {
       campaignEmptyState.hidden = false;
       campaignWorkspace.hidden = true;
@@ -104,16 +167,20 @@ async function initializeCampaigns() {
 
     const response = await getBuyers();
     const selectedIdSet = new Set(selectedIds);
-    selectedBuyers = (response.buyers || []).filter((buyer) => selectedIdSet.has(String(buyer.id)));
+    const renderedIds = new Set();
+    selectedBuyers = (response.buyers || []).filter((buyer) => {
+      const id = String(buyer.id);
+      if (!selectedIdSet.has(id) || renderedIds.has(id)) return false;
+      renderedIds.add(id);
+      return true;
+    });
     if (!selectedBuyers.length) {
-      sessionStorage.removeItem(`${campaignStoragePrefix}${user.id}`);
       campaignEmptyState.hidden = false;
       campaignWorkspace.hidden = true;
       return;
     }
 
-    campaignEmptyState.hidden = true;
-    campaignWorkspace.hidden = false;
+    showRecipientWorkspace();
     renderSelectedRecipients();
   } catch (error) {
     campaignEmptyState.hidden = true;
@@ -125,6 +192,12 @@ async function initializeCampaigns() {
     setCampaignStatus(message, 'notice error');
   }
 }
+
+addMoreRecipientsButton?.addEventListener('click', () => {
+  window.location.href = 'buyers.html';
+});
+
+clearAllRecipientsButton?.addEventListener('click', clearRecipients);
 
 campaignForm?.addEventListener('submit', async (event) => {
   event.preventDefault();

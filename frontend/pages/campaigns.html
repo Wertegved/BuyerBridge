@@ -57,7 +57,8 @@
         <div class="empty-state-box">
           <h2>No outreach campaign started yet.</h2>
           <p>Choose a set of potential buyers and send a structured business introduction from the buyer discovery workflow.</p>
-          <a class="button button-primary" href="buyers.html">Start a Search</a>
+          <p id="empty-recipient-count" aria-live="polite">0 selected</p>
+          <a class="button button-primary" href="buyers.html">Find Buyers</a>
         </div>
       </section>
 
@@ -65,6 +66,10 @@
         <div>
           <h2>Selected Recipients</h2>
           <p id="recipient-count" aria-live="polite"></p>
+          <div class="campaign-recipient-controls">
+            <button id="add-more-recipients" class="button button-secondary" type="button" hidden>Add More Recipients</button>
+            <button id="clear-all-recipients" class="button button-secondary" type="button" hidden>Clear All Recipients</button>
+          </div>
           <ul id="selected-recipients" class="campaign-recipient-list"></ul>
         </div>
 
