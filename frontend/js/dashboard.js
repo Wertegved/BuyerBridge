@@ -62,15 +62,10 @@ async function loadDashboard() {
 const clearDataButton = document.getElementById('clear-all-data-button');
 const clearDataStatus = document.getElementById('clear-data-status');
 
-document.addEventListener('DOMContentLoaded', () => {
-  const clearDataButton = document.getElementById('clear-all-data-button');
-  const clearDataStatus = document.getElementById('clear-data-status');
+const clearDataButton = document.getElementById('clear-all-data-button');
+const clearDataStatus = document.getElementById('clear-data-status');
 
-  if (!clearDataButton) {
-    console.error('BuyerBridge: Clear All Data button not found.');
-    return;
-  }
-
+if (clearDataButton) {
   clearDataButton.addEventListener('click', async (event) => {
     event.preventDefault();
 
@@ -98,10 +93,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       await clearDashboardData();
 
-      // Clear only frontend selection/UI state.
       sessionStorage.removeItem(`buyerbridge.selectedBuyerIds.${user.id}`);
 
-      // Refresh dashboard data from backend.
       const refreshed = await loadDashboard();
 
       if (!refreshed) {
@@ -127,5 +120,5 @@ document.addEventListener('DOMContentLoaded', () => {
       clearDataButton.disabled = false;
     }
   });
-});
+}
 loadDashboard();
