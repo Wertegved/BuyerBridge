@@ -90,6 +90,29 @@ def normalize_name(value: str | None) -> str | None:
     return cleaned or None
 
 
+def extract_osm_website(tags: dict[str, Any]) -> str | None:
+    website_fields = ("website", "contact:website", "url", "contact:url")
+    for field in website_fields:
+        value = normalize_name(tags.get(field))
+        if value:
+            return value
+
+    osm_tags = tags.get("osm_tags")
+    if isinstance(osm_tags, dict):
+        for field in website_fields:
+            value = normalize_name(osm_tags.get(field))
+            if value:
+                return value
+    elif isinstance(osm_tags, list):
+        for item in osm_tags:
+            if isinstance(item, dict) and item.get("key") in website_fields:
+                value = normalize_name(item.get("value"))
+                if value:
+                    return value
+
+    return None
+
+
 def deduplicate_businesses(rows: list[dict]) -> list[dict]:
     seen: set[tuple[str, str]] = set()
     deduped: list[dict] = []
@@ -318,7 +341,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                 city = tags.get("addr:city") or location.get("city")
                 state = tags.get("addr:state") or location.get("state")
                 country = tags.get("addr:country") or "United States"
-                website = tags.get("website") or tags.get("contact:website")
+                website = extract_osm_website(tags)
                 phone = tags.get("phone") or tags.get("contact:phone")
                 email = tags.get("email") or tags.get("contact:email")
 
@@ -410,7 +433,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     house_number = properties.get("housenumber")
                     street = properties.get("street")
                     address = " ".join(filter(None, [house_number, street])) or None
-                    website = properties.get("website") or properties.get("contact:website")
+                    website = extract_osm_website(properties)
                     phone = properties.get("phone") or properties.get("contact:phone")
                     email = properties.get("email") or properties.get("contact:email")
                     business = {

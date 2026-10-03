@@ -17,6 +17,20 @@ from app.services.location import LocationResolutionError, NominatimLocationReso
 router = APIRouter(prefix="/api")
 
 
+async def enrich_buyer_result(result: dict, enrichment_service: ContactEnrichmentService) -> dict:
+    website = result.get("website")
+    domain = FindymailContactEnrichment._extract_domain(website)
+    if not domain or " " in domain or "." not in domain:
+        return result
+
+    enrichment_input = {**result, "website": domain}
+    enriched = await enrichment_service.enrich(enrichment_input)
+    for field in ("email", "email_available", "contact_source"):
+        if field in enriched:
+            result[field] = enriched[field]
+    return result
+
+
 @router.post("/search-buyers")
 async def search_buyers(
     payload: SearchRequest,
@@ -49,7 +63,7 @@ async def search_buyers(
 
     contact_enrichment = ContactEnrichmentService(FindymailContactEnrichment())
     for index, result in enumerate(results):
-        results[index] = await contact_enrichment.enrich(result)
+        results[index] = await enrich_buyer_result(result, contact_enrichment)
 
     search_record = SearchRecord(
         user_id=current_user.id,

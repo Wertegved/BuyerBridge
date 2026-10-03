@@ -123,25 +123,28 @@ class FindymailContactEnrichment(ContactEnrichmentProvider):
         except (httpx.HTTPError, ValueError, Exception):
             return business
 
-        contact = data.get("contact")
+        try:
+            contacts = data.get("contacts") if isinstance(data, dict) else None
+            if not isinstance(contacts, list) or not contacts:
+                return business
 
-        if not isinstance(contact, dict):
+            contact = contacts[0]
+            if not isinstance(contact, dict):
+                return business
+
+            email = contact.get("email")
+            if not isinstance(email, str):
+                return business
+
+            email = email.strip().lower()
+            if not email or "@" not in email:
+                return business
+
+            self._set_value(business, "email", email)
+            self._set_value(business, "email_available", True)
+            self._set_value(business, "contact_source", "findymail")
+        except Exception:
             return business
-
-        email = contact.get("email")
-
-        if not isinstance(email, str):
-            return business
-
-        email = email.strip().lower()
-
-        # Basic validation so we never store malformed values.
-        if not email or "@" not in email:
-            return business
-
-        self._set_value(business, "email", email)
-        self._set_value(business, "email_available", True)
-        self._set_value(business, "contact_source", "findymail")
 
         return business
 
