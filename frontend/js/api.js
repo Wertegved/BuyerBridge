@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'http://127.0.0.1:8000';
 
 function getAuthHeaders() {
   return {};
@@ -16,8 +16,12 @@ async function requestJson(url, options = {}) {
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    const message = body.detail || 'Request failed. Please try again.';
-    throw new Error(message);
+    const message = Array.isArray(body.detail)
+      ? body.detail.map((item) => item.msg).filter(Boolean).join(' ')
+      : body.detail || 'Request failed. Please try again.';
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();
@@ -48,6 +52,10 @@ async function getEmailHistory() {
 
 async function getBuyerDetail(buyerId) {
   return requestJson(`${API_BASE_URL}/api/buyers/${buyerId}`);
+}
+
+async function getBuyers() {
+  return requestJson(`${API_BASE_URL}/api/buyers`);
 }
 
 async function sendEmail(payload) {

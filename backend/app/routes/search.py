@@ -56,7 +56,6 @@ async def search_buyers(
 
     for result in results:
         buyer = Buyer(
-            provider_id=result.get("provider_id"),
             business_name=result.get("business_name") or "Business name unavailable",
             category=result.get("category"),
             address=result.get("address"),

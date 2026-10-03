@@ -7,6 +7,9 @@ const ALLOWED_NEXT_PATHS = new Set([
   '/pages/buyers.html',
   '/pages/campaigns.html',
 ]);
+let currentUser = null;
+let authState = 'unknown';
+let authReady = Promise.resolve();
 
 function getAppRelativePath() {
   const pathname = (window.location.pathname || '/').split('\\').join('/');
@@ -126,15 +129,19 @@ function setBrandLinks() {
 }
 
 function isAuthenticated() {
-  return document.cookie.split('; ').some((cookie) => cookie.startsWith('buyerbridge_session='));
+  return authState === 'authenticated' && currentUser !== null;
 }
 
-function setAuthToken() {
-  return null;
-}
+async function refreshAuthState() {
+  try {
+    currentUser = await fetchCurrentUser();
+    authState = 'authenticated';
+  } catch (error) {
+    currentUser = null;
+    authState = error.status === 401 ? 'unauthenticated' : 'unavailable';
+  }
 
-function clearAuthToken() {
-  document.cookie = 'buyerbridge_session=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+  return authState;
 }
 
 function renderAuthButtonGroup(container) {
@@ -155,6 +162,9 @@ function renderAuthButtonGroup(container) {
   if (logoutButton) {
     logoutButton.addEventListener('click', async () => {
       await logout();
+      currentUser = null;
+      authState = 'unauthenticated';
+      syncAuthActions();
       window.location.href = getHomePath();
     });
   }
@@ -196,12 +206,12 @@ function initializeHomeCtas() {
 function handleProtectedPageAccess() {
   const currentPath = getCurrentAppPath();
 
-  if (PROTECTED_PATHS.includes(currentPath) && !isAuthenticated()) {
+  if (PROTECTED_PATHS.includes(currentPath) && authState === 'unauthenticated') {
     window.location.href = buildProtectedRedirect(currentPath);
     return;
   }
 
-  if (AUTH_ONLY_PATHS.includes(currentPath) && isAuthenticated()) {
+  if (AUTH_ONLY_PATHS.includes(currentPath) && authState === 'authenticated') {
     window.location.href = getSafeRedirectTarget(DEFAULT_AUTH_REDIRECT);
   }
 }
@@ -234,6 +244,7 @@ function syncAuthLinkPreservation() {
 
 async function handleLoginSubmit(event) {
   event.preventDefault();
+  await authReady;
 
   const form = event.currentTarget;
   const notice = form.querySelector('[data-auth-message]');
@@ -247,6 +258,10 @@ async function handleLoginSubmit(event) {
 
   try {
     await login({ email, password });
+    const state = await refreshAuthState();
+    if (state !== 'authenticated') {
+      throw new Error('Login succeeded, but the session could not be verified. Please try again.');
+    }
     showNotice(notice, 'Login successful. Redirecting...', 'success');
     window.location.href = getSafeRedirectTarget(DEFAULT_AUTH_REDIRECT);
   } catch (error) {
@@ -256,6 +271,7 @@ async function handleLoginSubmit(event) {
 
 async function handleSignupSubmit(event) {
   event.preventDefault();
+  await authReady;
 
   const form = event.currentTarget;
   const notice = form.querySelector('[data-auth-message]');
@@ -278,6 +294,10 @@ async function handleSignupSubmit(event) {
 
   try {
     await signup(payload);
+    const state = await refreshAuthState();
+    if (state !== 'authenticated') {
+      throw new Error('Account created, but the session could not be verified. Please log in.');
+    }
     showNotice(notice, 'Account created successfully. Redirecting...', 'success');
     window.location.href = getSafeRedirectTarget(DEFAULT_AUTH_REDIRECT);
   } catch (error) {
@@ -306,14 +326,7 @@ async function handleForgotPasswordSubmit(event) {
   }
 }
 
-function initializeBuyerBridgeAuth() {
-  setBrandLinks();
-  syncAuthActions();
-  syncAuthLinkPreservation();
-  initializeProtectedNavLinks();
-  handleProtectedPageAccess();
-  initializeHomeCtas();
-
+function initializeAuthForms() {
   const loginForm = document.getElementById('login-form');
   if (loginForm) {
     loginForm.addEventListener('submit', handleLoginSubmit);
@@ -328,6 +341,18 @@ function initializeBuyerBridgeAuth() {
   if (forgotForm) {
     forgotForm.addEventListener('submit', handleForgotPasswordSubmit);
   }
+}
+
+async function initializeBuyerBridgeAuth() {
+  setBrandLinks();
+  syncAuthLinkPreservation();
+  authReady = refreshAuthState();
+  initializeAuthForms();
+  await authReady;
+  syncAuthActions();
+  initializeProtectedNavLinks();
+  handleProtectedPageAccess();
+  initializeHomeCtas();
 }
 
 if (document.readyState === 'loading') {

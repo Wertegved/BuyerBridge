@@ -4,6 +4,7 @@ import logging
 import math
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -49,25 +50,32 @@ def normalize_name(value: str | None) -> str | None:
 
 
 def deduplicate_businesses(rows: list[dict]) -> list[dict]:
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     deduped: list[dict] = []
     for item in rows:
         business_name = (item.get("business_name") or "").strip().lower()
-        website = (item.get("website") or "").lower().strip()
-        phone = (item.get("phone") or "").lower().strip()
-        address_key = f"{business_name}|{(item.get('address') or '').strip().lower()}"
-        signature = (
-            item.get("provider_id")
-            or website
-            or phone
-            or address_key
-            or f"{business_name}|{item.get('city') or ''}|{item.get('state') or ''}"
-        )
-        if not signature:
+        raw_website = (item.get("website") or "").strip().lower()
+        parsed_website = urlparse(raw_website if "://" in raw_website else f"//{raw_website}")
+        website_host = (parsed_website.hostname or "").removeprefix("www.")
+        phone = re.sub(r"\D", "", item.get("phone") or "")
+        address = re.sub(r"\s+", " ", (item.get("address") or "").strip().lower())
+
+        signatures: list[tuple[str, str]] = []
+        provider_id = item.get("provider_id")
+        if provider_id:
+            signatures.append(("provider", str(provider_id)))
+        if website_host:
+            signatures.append(("website", website_host))
+        if len(phone) >= 7:
+            signatures.append(("phone", phone))
+        if business_name and address and address not in {"address unavailable", "unknown"}:
+            signatures.append(("name-address", f"{business_name}|{address}"))
+
+        if not signatures:
             continue
-        if signature in seen:
+        if any(signature in seen for signature in signatures):
             continue
-        seen.add(signature)
+        seen.update(signatures)
         deduped.append(item)
     return deduped
 
@@ -110,7 +118,7 @@ def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float],
     if len(bbox) != 4:
         return []
 
-    south, west, north, east = [float(value) for value in bbox]
+    south, north, west, east = [float(value) for value in bbox]
     height = max(0.0, north - south)
     width = max(0.0, east - west)
     if tile_size is None:
@@ -144,7 +152,7 @@ def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float],
 def build_overpass_query_for_bbox(buyer_type: str, bbox: tuple[float, float, float, float], limit: int) -> str:
     south, west, north, east = bbox
     tags = get_supported_tags(buyer_type)
-    tag_clause = ";\n".join([f"nwr[{tag}]({south},{west},{north},{east});" for tag in tags])
+    tag_clause = "\n".join([f"nwr[{tag}]({south},{west},{north},{east});" for tag in tags])
     max_results = max(8, min(limit, 25))
     query = f"""
     [out:json][timeout:25];
@@ -164,12 +172,12 @@ def build_overpass_query(buyer_type: str, location: dict[str, Any], limit: int) 
         raise ValueError("Location coordinates are required for buyer discovery.")
 
     if len(bbox) == 4:
-        south, west, north, east = [float(value) for value in bbox]
+        south, north, west, east = [float(value) for value in bbox]
         return build_overpass_query_for_bbox(buyer_type, (south, west, north, east), limit)
 
     radius = max(800, min(3000, int(limit * 250)))
     tags = get_supported_tags(buyer_type)
-    tag_clause = ";\n".join([f"nwr[{tag}](around:{radius},{lat},{lon});" for tag in tags])
+    tag_clause = "\n".join([f"nwr[{tag}](around:{radius},{lat},{lon});" for tag in tags])
     max_results = max(8, min(limit, 25))
     query = f"""
     [out:json][timeout:25];
@@ -200,8 +208,6 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
             tiles = split_bbox_into_tiles(bbox)
             if len(tiles) > 1:
                 logger.info("Overpass buyer search using %s tiles for %s at %s", len(tiles), query, location.get("display_name"))
-            else:
-                tiles = [tuple(float(value) for value in bbox)]
         else:
             tiles = [(float(latitude), float(longitude), float(latitude), float(longitude))]
 
@@ -209,9 +215,10 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
         seen_provider_ids: set[str] = set()
         tiles_attempted = 0
         failed_tiles: list[str] = []
+        successful_tiles = 0
 
-        def process_tiles(tile_set: list[tuple[float, float, float, float]], label: str) -> bool:
-            nonlocal unique_businesses, seen_provider_ids, tiles_attempted, failed_tiles
+        async def process_tiles(tile_set: list[tuple[float, float, float, float]], label: str) -> bool:
+            nonlocal unique_businesses, seen_provider_ids, tiles_attempted, failed_tiles, successful_tiles
             for tile_index, tile in enumerate(tile_set, start=1):
                 tiles_attempted += 1
                 tile_label = f"{label} tile {tile_index}/{len(tile_set)}"
@@ -226,10 +233,14 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     logger.warning("Overpass request failed for %s: %s", tile_label, exc, exc_info=True)
                     continue
 
-                if response.status_code in {429, 503}:
+                if response.status_code == 429:
                     failed_tiles.append(tile_label)
                     logger.warning("Overpass request returned %s for %s", response.status_code, tile_label)
                     return False
+                if response.status_code in {502, 503, 504}:
+                    failed_tiles.append(tile_label)
+                    logger.warning("Overpass server error %s for %s; skipping tile", response.status_code, tile_label)
+                    continue
                 if response.status_code >= 500:
                     failed_tiles.append(tile_label)
                     logger.warning("Overpass server error %s for %s", response.status_code, tile_label)
@@ -246,6 +257,11 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     logger.warning("Overpass returned non-JSON for %s: %s", tile_label, exc, exc_info=True)
                     continue
 
+                if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
+                    failed_tiles.append(tile_label)
+                    logger.warning("Overpass returned an invalid payload for %s", tile_label)
+                    continue
+
                 if isinstance(payload, dict) and isinstance(payload.get("remark"), str):
                     remark = payload.get("remark", "")
                     if "timeout" in remark.lower():
@@ -253,6 +269,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                         logger.warning("Overpass query timed out for %s: %s", tile_label, remark)
                         continue
 
+                successful_tiles += 1
                 nodes = payload.get("elements", [])
                 for element in nodes:
                     tags = element.get("tags") or {}
@@ -289,14 +306,17 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     }
                     unique_businesses.append(business)
 
-                if len(unique_businesses) >= limit:
+                if len(deduplicate_businesses(unique_businesses)) >= limit:
                     return True
 
             return False
 
-        process_tiles(tiles, "primary")
+        await process_tiles(tiles, "primary")
 
         if not unique_businesses:
+            if successful_tiles:
+                logger.info("Overpass returned no matching businesses for query %s", query)
+                return []
             if failed_tiles:
                 logger.warning("All Overpass tiles failed for query %s: %s", query, failed_tiles)
             raise RuntimeError("We couldn't retrieve buyer results right now. Please try again.")

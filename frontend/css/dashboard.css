@@ -21,6 +21,150 @@
   box-shadow: 0 0 0 3px rgba(30, 58, 52, 0.08);
 }
 
+.result-card [aria-pressed="true"] {
+  background: var(--primary-dark);
+  color: #fff;
+}
+
+.toolbar-actions select,
+.buyer-filter-panel input,
+.buyer-filter-panel select {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.65rem 0.8rem;
+}
+
+.buyer-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-alt);
+}
+
+.buyer-filter-panel[hidden],
+[hidden] {
+  display: none !important;
+}
+
+.buyer-filter-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.buyer-details-dialog {
+  width: min(680px, calc(100% - 32px));
+  max-height: min(80vh, 720px);
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.buyer-details-dialog::backdrop {
+  background: rgba(20, 28, 24, 0.52);
+}
+
+.buyer-details-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.buyer-details-header h2 {
+  margin: 0;
+}
+
+.buyer-detail-fields {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.buyer-detail-fields dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.buyer-detail-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.campaign-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.campaign-recipient-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.campaign-recipient-list li,
+.email-history-list li {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.campaign-recipient-list small,
+.email-history-list small {
+  display: block;
+  color: var(--muted);
+}
+
+.campaign-compose-form {
+  display: grid;
+  gap: 14px;
+}
+
+.campaign-compose-form input,
+.campaign-compose-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.82rem 0.9rem;
+  color: var(--text);
+}
+
+.campaign-compose-form textarea {
+  min-height: 160px;
+  resize: vertical;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .loader {
   display: inline-flex;
   align-items: center;

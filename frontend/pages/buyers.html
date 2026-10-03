@@ -63,7 +63,7 @@
 
             <div class="field-group">
               <label for="product_description">Product Description</label>
-              <textarea id="product_description" name="product_description" rows="4" placeholder="Handmade decorative wall art suitable for modern residential interiors." required></textarea>
+              <textarea id="product_description" name="product_description" rows="4" placeholder="Handmade decorative wall art suitable for modern residential interiors." required>Handmade decorative wall art suitable for modern residential interiors.</textarea>
             </div>
 
             <div class="field-group">
@@ -88,8 +88,8 @@
             <div class="field-group">
               <label for="limit">Result Limit</label>
               <select id="limit" name="limit">
-                <option value="10">10</option>
-                <option value="20" selected>20</option>
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
                 <option value="50">50</option>
               </select>
             </div>
@@ -111,17 +111,52 @@
         <div class="results-toolbar">
           <div>
             <p class="eyebrow muted">Potential buyers</p>
-            <h2 id="results-title">No results yet</h2>
+            <h2 id="results-title" aria-live="polite">No results yet</h2>
           </div>
           <div class="toolbar-actions">
-            <button class="button button-secondary" type="button">Filter</button>
-            <button class="button button-secondary" type="button">Sort</button>
-            <button class="button button-primary" type="button">Select All</button>
+              <button id="filter-toggle" class="button button-secondary" type="button" aria-expanded="false" aria-controls="buyer-filter-panel">Filter</button>
+              <label class="visually-hidden" for="sort-by">Sort buyers</label>
+              <select id="sort-by" aria-label="Sort buyers">
+                <option value="relevance">Sort: Relevance</option>
+                <option value="name">Sort: Business name</option>
+                <option value="location">Sort: Location</option>
+              </select>
+              <button id="select-all-button" class="button button-primary" type="button">Select All</button>
+              <span id="selected-count" aria-live="polite">0 selected</span>
+              <a id="contact-selected-button" class="button button-secondary" href="campaigns.html" hidden>Contact Selected Buyers</a>
           </div>
         </div>
+          <div id="buyer-filter-panel" class="buyer-filter-panel" hidden>
+          <label for="buyer-filter-text">Category or location
+            <input id="buyer-filter-text" type="search" placeholder="Filter category, city, or state" />
+          </label>
+          <label for="buyer-email-filter">Email
+            <select id="buyer-email-filter">
+              <option value="all">Any availability</option>
+              <option value="available">Email available</option>
+              <option value="unavailable">No email</option>
+            </select>
+          </label>
+          <label for="buyer-website-filter">Website
+            <select id="buyer-website-filter">
+              <option value="all">Any availability</option>
+              <option value="available">Website available</option>
+              <option value="unavailable">No website</option>
+            </select>
+          </label>
+            <button id="clear-buyer-filters" class="button button-secondary" type="button">Clear Filters</button>
+          </div>
         <div id="results-container" class="results-grid"></div>
       </section>
     </main>
+
+      <dialog id="buyer-details-dialog" class="buyer-details-dialog" aria-labelledby="buyer-detail-title">
+        <div class="buyer-details-header">
+          <h2 id="buyer-detail-title">Buyer details</h2>
+          <button id="close-buyer-details" class="button button-secondary" type="button">Close</button>
+        </div>
+        <dl id="buyer-detail-fields" class="buyer-detail-fields"></dl>
+      </dialog>
 
     <script src="../js/api.js"></script>
     <script src="../js/auth.js"></script>

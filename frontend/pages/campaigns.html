@@ -53,12 +53,37 @@
         <h1>Campaigns</h1>
       </section>
 
-      <section class="panel-section">
+      <section id="campaign-empty-state" class="panel-section">
         <div class="empty-state-box">
           <h2>No outreach campaign started yet.</h2>
           <p>Choose a set of potential buyers and send a structured business introduction from the buyer discovery workflow.</p>
           <a class="button button-primary" href="buyers.html">Start a Search</a>
         </div>
+      </section>
+
+      <section id="campaign-workspace" class="panel-section campaign-workspace" hidden>
+        <div>
+          <h2>Selected Recipients</h2>
+          <p id="recipient-count" aria-live="polite"></p>
+          <ul id="selected-recipients" class="campaign-recipient-list"></ul>
+        </div>
+
+        <form id="campaign-compose-form" class="campaign-compose-form" novalidate>
+          <h2>Compose Email</h2>
+          <label for="campaign-subject">Subject</label>
+          <input id="campaign-subject" name="subject" type="text" minlength="3" maxlength="200" required />
+          <label for="campaign-message">Message</label>
+          <textarea id="campaign-message" name="message" minlength="10" maxlength="5000" required></textarea>
+          <p id="campaign-status" role="status" aria-live="polite"></p>
+          <button id="send-campaign-button" class="button button-primary" type="submit" disabled>Send Email</button>
+        </form>
+      </section>
+
+      <section class="panel-section email-history-section">
+        <h2>Email History</h2>
+        <ul id="email-history-list" class="campaign-recipient-list email-history-list">
+          <li>Loading email history...</li>
+        </ul>
       </section>
     </main>
 

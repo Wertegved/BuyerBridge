@@ -60,6 +60,15 @@
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .results-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .buyer-filter-panel {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 540px) {
@@ -87,6 +96,14 @@
 
   .hero-flow {
     font-size: 0.75rem;
+  }
+
+  .buyer-detail-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .buyer-details-header {
+    align-items: center;
   }
 
   .footer-wrap {
