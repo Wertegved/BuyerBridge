@@ -12,6 +12,12 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+OVERPASS_ENDPOINTS = (
+    "https://overpass.private.coffee/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+)
+
 
 class BusinessSearchProvider:
     async def search(self, query: str, location: dict[str, Any] | str, limit: int):
@@ -191,7 +197,7 @@ def build_overpass_query(buyer_type: str, location: dict[str, Any], limit: int) 
 
 class OverpassBusinessSearchProvider(BusinessSearchProvider):
     def __init__(self, api_url: str | None = None, user_agent: str | None = None):
-        self.api_url = api_url or settings.OVERPASS_API_URL
+        self.api_urls = (api_url,) if api_url else OVERPASS_ENDPOINTS
         self.user_agent = user_agent or settings.OVERPASS_USER_AGENT
 
     async def search(self, query: str, location: dict[str, Any] | str, limit: int):
@@ -217,66 +223,67 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
         seen_provider_ids: set[str] = set()
         request_succeeded = False
 
-        try:
-            async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": self.user_agent}) as client:
-                response = await client.post(self.api_url, data=overpass_query)
-        except httpx.RequestError as exc:
-            logger.warning("Overpass request failed for buyer search: %s", exc, exc_info=True)
-        else:
-            if response.status_code == 429:
-                logger.warning("Overpass request returned %s for buyer search", response.status_code)
-            elif response.status_code in {502, 503, 504}:
-                logger.warning("Overpass server error %s for buyer search", response.status_code)
-            elif response.status_code >= 500:
-                logger.warning("Overpass server error %s for buyer search", response.status_code)
-            elif response.status_code != 200:
-                logger.warning("Overpass request status %s for buyer search", response.status_code)
-            else:
-                try:
-                    payload = response.json()
-                except ValueError as exc:
-                    logger.warning("Overpass returned non-JSON for buyer search: %s", exc, exc_info=True)
-                else:
-                    if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
-                        logger.warning("Overpass returned an invalid payload for buyer search")
-                    elif isinstance(payload.get("remark"), str) and "timeout" in payload["remark"].lower():
-                        logger.warning("Overpass query timed out for buyer search: %s", payload["remark"])
-                    else:
-                        request_succeeded = True
-                        for element in payload.get("elements", []):
-                            tags = element.get("tags") or {}
-                            name = normalize_name(tags.get("name") or tags.get("brand")) or "Business name unavailable"
-                            category = tags.get("shop") or tags.get("craft") or tags.get("amenity") or "Business"
-                            address = tags.get("addr:street")
-                            city = tags.get("addr:city") or location.get("city")
-                            state = tags.get("addr:state") or location.get("state")
-                            country = tags.get("addr:country") or "United States"
-                            website = tags.get("website") or tags.get("contact:website")
-                            phone = tags.get("phone") or tags.get("contact:phone")
-                            email = tags.get("email") or tags.get("contact:email")
+        for endpoint in self.api_urls:
+            try:
+                async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": self.user_agent}) as client:
+                    response = await client.post(endpoint, data=overpass_query)
+            except httpx.RequestError as exc:
+                logger.warning("Overpass request failed for %s: %s", endpoint, exc, exc_info=True)
+                continue
 
-                            provider_id = f"osm:{element.get('type')}:{element.get('id')}"
-                            if provider_id in seen_provider_ids:
-                                continue
-                            seen_provider_ids.add(provider_id)
+            if response.status_code != 200:
+                logger.warning("Overpass request to %s returned status %s", endpoint, response.status_code)
+                continue
 
-                            business = {
-                                "provider_id": provider_id,
-                                "business_name": name,
-                                "category": category.replace("_", " ").title(),
-                                "address": address or "Address unavailable",
-                                "city": city,
-                                "state": state,
-                                "country": country,
-                                "website": website,
-                                "phone": phone,
-                                "email": email,
-                                "email_available": bool(email),
-                                "source": "openstreetmap",
-                                "contact_source": None,
-                                "relevance_score": 0,
-                            }
-                            unique_businesses.append(business)
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                logger.warning("Overpass returned non-JSON from %s: %s", endpoint, exc, exc_info=True)
+                continue
+
+            if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
+                logger.warning("Overpass returned an invalid payload from %s", endpoint)
+                continue
+            if isinstance(payload.get("remark"), str) and "timeout" in payload["remark"].lower():
+                logger.warning("Overpass query timed out at %s: %s", endpoint, payload["remark"])
+                continue
+
+            request_succeeded = True
+            for element in payload.get("elements", []):
+                tags = element.get("tags") or {}
+                name = normalize_name(tags.get("name") or tags.get("brand")) or "Business name unavailable"
+                category = tags.get("shop") or tags.get("craft") or tags.get("amenity") or "Business"
+                address = tags.get("addr:street")
+                city = tags.get("addr:city") or location.get("city")
+                state = tags.get("addr:state") or location.get("state")
+                country = tags.get("addr:country") or "United States"
+                website = tags.get("website") or tags.get("contact:website")
+                phone = tags.get("phone") or tags.get("contact:phone")
+                email = tags.get("email") or tags.get("contact:email")
+
+                provider_id = f"osm:{element.get('type')}:{element.get('id')}"
+                if provider_id in seen_provider_ids:
+                    continue
+                seen_provider_ids.add(provider_id)
+
+                business = {
+                    "provider_id": provider_id,
+                    "business_name": name,
+                    "category": category.replace("_", " ").title(),
+                    "address": address or "Address unavailable",
+                    "city": city,
+                    "state": state,
+                    "country": country,
+                    "website": website,
+                    "phone": phone,
+                    "email": email,
+                    "email_available": bool(email),
+                    "source": "openstreetmap",
+                    "contact_source": None,
+                    "relevance_score": 0,
+                }
+                unique_businesses.append(business)
+            break
 
         if not unique_businesses:
             if request_succeeded:
