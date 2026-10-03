@@ -36,7 +36,11 @@ async def search_buyers(
     try:
         results = await BusinessSearchService(OverpassBusinessSearchProvider()).search(
             query=payload.buyer_type,
-            location=resolved_location,
+            location={
+                **resolved_location,
+                "product_category": payload.product_category,
+                "product_description": payload.product_description,
+            },
             limit=payload.limit,
         )
     except RuntimeError as exc:

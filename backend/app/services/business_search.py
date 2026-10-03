@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import re
@@ -19,6 +20,30 @@ OVERPASS_ENDPOINTS = (
 )
 NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "BuyerBridge/1.0 (buyer discovery application)"
+NOMINATIM_SEARCH_PHRASES = {
+    "interior designers": (
+        "interior designer",
+        "interior design",
+        "interior decorator",
+        "interior decoration",
+        "design studio",
+    ),
+    "interior design studios": (
+        "interior design",
+        "interior designer",
+        "design studio",
+    ),
+    "home decor": ("home decor", "interior decoration", "home furnishings", "furniture"),
+    "home decor stores": ("home decor", "interior decoration", "home furnishings", "furniture"),
+    "furniture stores": ("furniture", "furniture store", "home furnishings"),
+    "home furnishing retailers": ("home furnishings", "furniture", "home decor"),
+    "home staging companies": ("home staging", "interior design", "interior decorator"),
+    "interior architecture firms": ("interior architecture", "interior design", "design studio"),
+    "gift/home stores": ("home decor", "gift shop", "home furnishings"),
+    "gift & home stores": ("home decor", "gift shop", "home furnishings"),
+    "boutique home stores": ("home decor", "home furnishings", "furniture"),
+    "other": ("home decor", "furniture", "home furnishings"),
+}
 
 
 class BusinessSearchProvider:
@@ -120,6 +145,11 @@ def score_business(business: dict, buyer_type: str, product_keywords: list[str])
 
 def get_supported_tags(buyer_type: str) -> list[str]:
     return BUYER_TYPE_TAG_MAP.get(buyer_type.lower(), BUYER_TYPE_TAG_MAP["other"])[:3]
+
+
+def get_nominatim_search_phrases(buyer_type: str) -> tuple[str, ...]:
+    normalized_buyer_type = buyer_type.strip().lower()
+    return NOMINATIM_SEARCH_PHRASES.get(normalized_buyer_type, (buyer_type.strip(),))
 
 
 def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float], tile_size: float | None = None) -> list[tuple[float, float, float, float]]:
@@ -318,112 +348,115 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                 location.get("display_name")
                 or ", ".join(filter(None, [location.get("city"), location.get("state"), location.get("country")]))
             )
-            nominatim_query = f"{query} in {location_query}" if location_query else query
-            params = {
-                "q": nominatim_query,
-                "format": "jsonv2",
-                "addressdetails": 1,
-                "extratags": 1,
-                "namedetails": 1,
-                "limit": limit,
-            }
-            logger.info("Attempting Nominatim buyer search: %s", nominatim_query)
-            try:
-                async with httpx.AsyncClient(
-                    timeout=8.0,
-                    headers={"User-Agent": NOMINATIM_USER_AGENT},
-                ) as client:
-                    response = await client.get(NOMINATIM_SEARCH_URL, params=params)
+            for phrase_index, phrase in enumerate(get_nominatim_search_phrases(query)):
+                nominatim_query = f"{phrase} in {location_query}" if location_query else phrase
+                params = {
+                    "q": nominatim_query,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "extratags": 1,
+                    "namedetails": 1,
+                    "limit": limit,
+                }
+                if phrase_index:
+                    await asyncio.sleep(1)
+                logger.info("Attempting Nominatim buyer search: %s", nominatim_query)
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=8.0,
+                        headers={"User-Agent": NOMINATIM_USER_AGENT},
+                    ) as client:
+                        response = await client.get(NOMINATIM_SEARCH_URL, params=params)
+                except (httpx.HTTPError, TimeoutError) as exc:
+                    logger.warning(
+                        "Nominatim buyer search failed with %s: %s",
+                        type(exc).__name__,
+                        exc,
+                        exc_info=True,
+                    )
+                    continue
+
                 if response.status_code != 200:
                     logger.warning(
                         "Nominatim buyer search returned HTTP status %s",
                         response.status_code,
                     )
-                else:
-                    try:
-                        nominatim_results = response.json()
-                    except ValueError as exc:
-                        logger.warning("Nominatim returned invalid JSON: %s", exc, exc_info=True)
-                    else:
-                        if not isinstance(nominatim_results, list):
-                            logger.warning("Nominatim returned an invalid search response")
-                        else:
-                            request_succeeded = True
-                            for result in nominatim_results:
-                                if not isinstance(result, dict):
-                                    continue
-                                name_details = result.get("namedetails")
-                                if not isinstance(name_details, dict):
-                                    name_details = {}
-                                name = normalize_name(
-                                    result.get("name")
-                                    or name_details.get("name")
-                                    or name_details.get("name:en")
-                                )
-                                category = result.get("category") or result.get("class")
-                                osm_type = result.get("osm_type")
-                                osm_id = result.get("osm_id")
-                                if (
-                                    not name
-                                    or category
-                                    not in {"shop", "craft", "office", "amenity", "tourism"}
-                                    or not osm_type
-                                    or not osm_id
-                                ):
-                                    continue
+                    continue
 
-                                address_details = result.get("address")
-                                if not isinstance(address_details, dict):
-                                    address_details = {}
-                                extratags = result.get("extratags")
-                                if not isinstance(extratags, dict):
-                                    extratags = {}
-                                house_number = address_details.get("house_number")
-                                road = (
-                                    address_details.get("road")
-                                    or address_details.get("pedestrian")
-                                    or address_details.get("street")
-                                )
-                                address = " ".join(filter(None, [house_number, road]))
-                                address = address or result.get("display_name") or "Address unavailable"
-                                place_category = result.get("type") or category
-                                provider_id = f"osm:{osm_type}:{osm_id}"
-                                city = (
-                                    address_details.get("city")
-                                    or address_details.get("town")
-                                    or address_details.get("village")
-                                    or address_details.get("municipality")
-                                    or address_details.get("hamlet")
-                                    or location.get("city")
-                                )
-                                business = {
-                                    "provider_id": provider_id,
-                                    "business_name": name,
-                                    "category": str(place_category).replace("_", " ").title(),
-                                    "address": address,
-                                    "city": city,
-                                    "state": address_details.get("state")
-                                    or address_details.get("state_district")
-                                    or location.get("state"),
-                                    "country": address_details.get("country") or location.get("country"),
-                                    "website": extratags.get("website") or extratags.get("contact:website"),
-                                    "phone": extratags.get("phone") or extratags.get("contact:phone"),
-                                    "email": extratags.get("email") or extratags.get("contact:email"),
-                                    "email_available": bool(
-                                        extratags.get("email") or extratags.get("contact:email")
-                                    ),
-                                    "source": "openstreetmap",
-                                    "contact_source": None,
-                                    "relevance_score": 0,
-                                }
-                                unique_businesses.append(business)
-            except (httpx.HTTPError, TimeoutError) as exc:
-                logger.warning(
-                    "Nominatim buyer search failed with %s: %s",
-                    type(exc).__name__,
-                    exc,
-                    exc_info=True,
-                )
+                try:
+                    nominatim_results = response.json()
+                except ValueError as exc:
+                    logger.warning("Nominatim returned invalid JSON: %s", exc, exc_info=True)
+                    continue
+
+                if not isinstance(nominatim_results, list):
+                    logger.warning("Nominatim returned an invalid search response")
+                    continue
+
+                request_succeeded = True
+                for result in nominatim_results:
+                    if not isinstance(result, dict):
+                        continue
+                    name_details = result.get("namedetails")
+                    if not isinstance(name_details, dict):
+                        name_details = {}
+                    name = normalize_name(
+                        result.get("name")
+                        or name_details.get("name")
+                        or name_details.get("name:en")
+                    )
+                    osm_type = result.get("osm_type")
+                    osm_id = result.get("osm_id")
+                    if not name:
+                        continue
+
+                    address_details = result.get("address")
+                    if not isinstance(address_details, dict):
+                        address_details = {}
+                    extratags = result.get("extratags")
+                    if not isinstance(extratags, dict):
+                        extratags = {}
+                    house_number = address_details.get("house_number")
+                    road = (
+                        address_details.get("road")
+                        or address_details.get("pedestrian")
+                        or address_details.get("street")
+                    )
+                    address = " ".join(filter(None, [house_number, road]))
+                    address = address or result.get("display_name") or "Address unavailable"
+                    place_category = result.get("type") or result.get("category") or result.get("class")
+                    if not place_category and not result.get("display_name") and not result.get("lat"):
+                        continue
+                    provider_id = f"osm:{osm_type}:{osm_id}" if osm_type and osm_id else None
+                    city = (
+                        address_details.get("city")
+                        or address_details.get("town")
+                        or address_details.get("village")
+                        or address_details.get("municipality")
+                        or address_details.get("hamlet")
+                        or location.get("city")
+                    )
+                    business = {
+                        "provider_id": provider_id,
+                        "business_name": name,
+                        "category": str(place_category or "Business").replace("_", " ").title(),
+                        "address": address,
+                        "city": city,
+                        "state": address_details.get("state")
+                        or address_details.get("state_district")
+                        or location.get("state"),
+                        "country": address_details.get("country") or location.get("country"),
+                        "website": extratags.get("website") or extratags.get("contact:website"),
+                        "phone": extratags.get("phone") or extratags.get("contact:phone"),
+                        "email": extratags.get("email") or extratags.get("contact:email"),
+                        "email_available": bool(
+                            extratags.get("email") or extratags.get("contact:email")
+                        ),
+                        "source": "openstreetmap",
+                        "contact_source": None,
+                        "relevance_score": 0,
+                    }
+                    unique_businesses.append(business)
 
         if not unique_businesses:
             if request_succeeded:
@@ -435,7 +468,21 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
 
         deduped = deduplicate_businesses(unique_businesses)
         scored = []
-        keywords = [piece.lower() for piece in re.findall(r"[A-Za-z]+", query.lower()) if len(piece) > 2]
+        scoring_context = " ".join(
+            filter(
+                None,
+                [
+                    query,
+                    location.get("product_category"),
+                    location.get("product_description"),
+                ],
+            )
+        )
+        keywords = [
+            piece.lower()
+            for piece in re.findall(r"[A-Za-z]+", scoring_context.lower())
+            if len(piece) > 2
+        ]
         for business in deduped:
             business["relevance_score"] = score_business(business, query, keywords)
             scored.append(business)
