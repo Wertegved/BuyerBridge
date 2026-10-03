@@ -224,21 +224,47 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
         request_succeeded = False
 
         for endpoint in self.api_urls:
+            logger.info("Attempting Overpass request to %s", endpoint)
             try:
                 async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": self.user_agent}) as client:
                     response = await client.post(endpoint, data=overpass_query)
-            except httpx.RequestError as exc:
-                logger.warning("Overpass request failed for %s: %s", endpoint, exc, exc_info=True)
+            except (httpx.RequestError, TimeoutError) as exc:
+                logger.warning(
+                    "Overpass request to %s failed with %s: %s",
+                    endpoint,
+                    type(exc).__name__,
+                    exc,
+                    exc_info=True,
+                )
                 continue
 
-            if response.status_code != 200:
-                logger.warning("Overpass request to %s returned status %s", endpoint, response.status_code)
-                continue
-
+            payload = None
+            valid_json = False
             try:
                 payload = response.json()
+                valid_json = True
             except ValueError as exc:
-                logger.warning("Overpass returned non-JSON from %s: %s", endpoint, exc, exc_info=True)
+                if response.status_code == 200:
+                    logger.warning("Overpass returned non-JSON from %s: %s", endpoint, exc, exc_info=True)
+
+            elements = payload.get("elements") if isinstance(payload, dict) else None
+            element_count = len(elements) if isinstance(elements, list) else 0
+            logger.info(
+                "Overpass response from %s: valid_json=%s, elements=%s",
+                endpoint,
+                str(valid_json).lower(),
+                element_count,
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    "Overpass request to %s returned HTTP status %s",
+                    endpoint,
+                    response.status_code,
+                )
+                continue
+
+            if not valid_json:
                 continue
 
             if not isinstance(payload, dict) or not isinstance(payload.get("elements", []), list):
@@ -289,7 +315,9 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
             if request_succeeded:
                 logger.info("Overpass returned no matching businesses for query %s", query)
                 return []
-            raise RuntimeError("We couldn't retrieve buyer results right now. Please try again.")
+            raise RuntimeError(
+                "All configured OpenStreetMap Overpass endpoints failed. Check Render logs for details."
+            )
 
         deduped = deduplicate_businesses(unique_businesses)
         scored = []
