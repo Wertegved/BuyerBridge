@@ -106,11 +106,19 @@ In a second terminal:
 
 ```bash
 cd frontend
-python -m http.server 5500
+python -m http.server 5510 --bind 127.0.0.1 --directory frontend
 ```
 
-Open `http://localhost:5500`. The frontend API base URL is configured in `frontend/js/api.js`.
+Open `http://127.0.0.1:5510/frontend/`. The frontend API base URL is configured in `frontend/js/api.js`.
 By default, that file points to the project's hosted API. To direct a local frontend to the local Compose API, set `API_BASE_URL` to `http://localhost:8000` in your local working copy; do not commit a local override.
+
+When both local services are running, use these URLs:
+
+- Frontend: `http://127.0.0.1:5510/frontend/`
+- Backend health check: `http://localhost:8000/health`
+- Interactive API documentation: `http://localhost:8000/docs`
+
+These addresses are available only while the corresponding local servers are running.
 
 For local configuration outside Docker Compose, copy `backend/.env.example` to `backend/.env` and set appropriate values. Never commit `.env` files or real credentials.
 
