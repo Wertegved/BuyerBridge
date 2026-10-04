@@ -6,6 +6,8 @@ from app.routes.search import enrich_buyer_result
 from app.services.business_search import (
     OverpassBusinessSearchProvider,
     build_overpass_query,
+    deduplicate_businesses,
+    extract_osm_tag,
     extract_osm_website,
     get_supported_tags,
     hydrate_osm_metadata,
@@ -29,6 +31,14 @@ class BusinessWebsiteExtractionTests(unittest.TestCase):
                 {"osm_tags": [{"key": "contact:website", "value": "nested-list.example.com"}]},
                 "nested-list.example.com",
             ),
+            (
+                {"extratags": {"contact:website": "https://extratags.example.com"}},
+                "https://extratags.example.com",
+            ),
+            (
+                {"tags": [{"key": "url", "value": "https://nested-tags.example.com"}]},
+                "https://nested-tags.example.com",
+            ),
         )
         for properties, expected in cases:
             with self.subTest(properties=properties):
@@ -44,6 +54,40 @@ class BusinessWebsiteExtractionTests(unittest.TestCase):
             ),
             "direct.example.com",
         )
+
+    def test_extracts_email_from_nominatim_extratags(self):
+        self.assertEqual(
+            extract_osm_tag(
+                {"extratags": {"contact:email": " hello@example.com "}},
+                ("email", "contact:email"),
+            ),
+            "hello@example.com",
+        )
+
+    def test_duplicate_businesses_keep_website_and_email_from_all_records(self):
+        results = deduplicate_businesses([
+            {
+                "provider_id": "osm:node:1",
+                "business_name": "Same Studio",
+                "address": "1 Main Street",
+                "website": None,
+                "email": None,
+            },
+            {
+                "provider_id": "osm:way:2",
+                "business_name": "Same Studio",
+                "address": "1 Main Street",
+                "website": "https://same.example",
+                "email": "hello@same.example",
+                "email_available": True,
+                "contact_source": "openstreetmap",
+            },
+        ])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["website"], "https://same.example")
+        self.assertEqual(results[0]["email"], "hello@same.example")
+        self.assertTrue(results[0]["email_available"])
 
 
 class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):

@@ -130,8 +130,8 @@ BUYER_TYPE_TAG_MAP = {
 }
 
 
-def normalize_name(value: str | None) -> str | None:
-    if value is None:
+def normalize_name(value: Any) -> str | None:
+    if not isinstance(value, str):
         return None
     cleaned = value.strip()
     return cleaned or None
@@ -143,18 +143,19 @@ def extract_osm_tag(tags: dict[str, Any], fields: tuple[str, ...]) -> str | None
         if value:
             return value
 
-    osm_tags = tags.get("osm_tags")
-    if isinstance(osm_tags, dict):
-        for field in fields:
-            value = normalize_name(osm_tags.get(field))
-            if value:
-                return value
-    elif isinstance(osm_tags, list):
-        for item in osm_tags:
-            if isinstance(item, dict) and item.get("key") in fields:
-                value = normalize_name(item.get("value"))
+    for container_name in ("osm_tags", "extratags", "tags"):
+        nested_tags = tags.get(container_name)
+        if isinstance(nested_tags, dict):
+            for field in fields:
+                value = normalize_name(nested_tags.get(field))
                 if value:
                     return value
+        elif isinstance(nested_tags, list):
+            for item in nested_tags:
+                if isinstance(item, dict) and item.get("key") in fields:
+                    value = normalize_name(item.get("value"))
+                    if value:
+                        return value
 
     return None
 
@@ -342,8 +343,18 @@ async def hydrate_osm_metadata(businesses: list[dict[str, Any]]) -> list[dict[st
 
 
 def deduplicate_businesses(rows: list[dict]) -> list[dict]:
-    seen: set[tuple[str, str]] = set()
     deduped: list[dict] = []
+    signature_owners: dict[tuple[str, str], dict] = {}
+
+    def merge_contact_data(target: dict, source: dict) -> None:
+        for field in ("website", "email"):
+            if target.get(field) in (None, "") and source.get(field) not in (None, ""):
+                target[field] = source[field]
+        if target.get("email"):
+            target["email_available"] = True
+            if not target.get("contact_source") and source.get("contact_source"):
+                target["contact_source"] = source["contact_source"]
+
     for item in rows:
         business_name = (item.get("business_name") or "").strip().lower()
         raw_website = (item.get("website") or "").strip().lower()
@@ -365,10 +376,30 @@ def deduplicate_businesses(rows: list[dict]) -> list[dict]:
 
         if not signatures:
             continue
-        if any(signature in seen for signature in signatures):
-            continue
-        seen.update(signatures)
-        deduped.append(item)
+
+        owners = []
+        for signature in signatures:
+            owner = signature_owners.get(signature)
+            if owner is not None and all(owner is not existing for existing in owners):
+                owners.append(owner)
+        if not owners:
+            deduped.append(item)
+            owner = item
+        else:
+            owner = owners[0]
+            merge_contact_data(owner, item)
+            for duplicate_owner in owners[1:]:
+                if duplicate_owner is owner:
+                    continue
+                merge_contact_data(owner, duplicate_owner)
+                deduped = [
+                    existing for existing in deduped if existing is not duplicate_owner
+                ]
+                for existing_signature, existing_owner in tuple(signature_owners.items()):
+                    if existing_owner is duplicate_owner:
+                        signature_owners[existing_signature] = owner
+        for signature in signatures:
+            signature_owners[signature] = owner
     return deduped
 
 
