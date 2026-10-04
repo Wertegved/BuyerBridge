@@ -5,8 +5,10 @@ from unittest.mock import patch
 from app.routes.search import enrich_buyer_result
 from app.services.business_search import (
     OverpassBusinessSearchProvider,
-    build_overpass_query_for_bbox,
+    build_overpass_query,
     extract_osm_website,
+    get_supported_tags,
+    hydrate_osm_metadata,
     score_business,
 )
 from app.services.contact_enrichment import ContactEnrichmentService, FindymailContactEnrichment
@@ -45,6 +47,306 @@ class BusinessWebsiteExtractionTests(unittest.TestCase):
 
 
 class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_overpass_zero_results_runs_photon_and_returns_business(self):
+        photon_requests = []
+
+        class Response:
+            status_code = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def json(self):
+                return self.body
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data):
+                return Response({"elements": []})
+
+            async def get(self, url, params):
+                if "nominatim" in url:
+                    return Response([])
+                photon_requests.append((url, params))
+                return Response({
+                    "features": [{
+                        "geometry": {"coordinates": [-74.0, 40.7]},
+                        "properties": {
+                            "name": "Real Photon Furniture",
+                            "osm_type": "N",
+                            "osm_id": 42,
+                            "osm_key": "shop",
+                            "osm_value": "furniture",
+                            "city": "New York",
+                        },
+                    }],
+                })
+
+        provider = OverpassBusinessSearchProvider(api_url="https://overpass.example")
+        location = {
+            "latitude": 40.7,
+            "longitude": -74.0,
+            "boundingbox": ["40.5", "40.9", "-74.2", "-73.7"],
+            "city": "New York",
+            "state": "NY",
+        }
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            results = await provider.search("Furniture Stores", location, 10)
+
+        self.assertTrue(photon_requests)
+        self.assertEqual(photon_requests[0][0], "https://photon.komoot.io/api/")
+        self.assertEqual(photon_requests[0][1]["bbox"], "-74.2,40.5,-73.7,40.9")
+        self.assertEqual(results[0]["business_name"], "Real Photon Furniture")
+        self.assertEqual(results[0]["provider_id"], "osm:N:42")
+
+    async def test_first_empty_overpass_endpoint_continues_to_second(self):
+        posted_urls = []
+
+        class Response:
+            status_code = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def json(self):
+                return self.body
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data):
+                posted_urls.append(url)
+                if url.endswith("second"):
+                    return Response({
+                        "elements": [{
+                            "type": "node",
+                            "id": 7,
+                            "tags": {"name": "Second Endpoint Studio", "shop": "furniture"},
+                        }],
+                    })
+                return Response({"elements": []})
+
+            async def get(self, url, params):
+                return Response([])
+
+        provider = OverpassBusinessSearchProvider()
+        provider.api_urls = ("https://overpass.example/first", "https://overpass.example/second")
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            results = await provider.search(
+                "Furniture Stores",
+                {"latitude": 40.7, "longitude": -74.0, "city": "New York"},
+                10,
+            )
+
+        self.assertEqual(posted_urls, list(provider.api_urls))
+        self.assertEqual(results[0]["business_name"], "Second Endpoint Studio")
+
+    async def test_all_empty_overpass_endpoints_fall_back_to_photon(self):
+        posted_urls = []
+        photon_calls = []
+
+        class Response:
+            status_code = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def json(self):
+                return self.body
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data):
+                posted_urls.append(url)
+                return Response({"elements": []})
+
+            async def get(self, url, params):
+                if "nominatim" in url:
+                    return Response([])
+                photon_calls.append(url)
+                return Response({"features": []})
+
+        provider = OverpassBusinessSearchProvider()
+        provider.api_urls = ("https://overpass.example/1", "https://overpass.example/2", "https://overpass.example/3")
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            results = await provider.search(
+                "Furniture Stores",
+                {"latitude": 40.7, "longitude": -74.0, "city": "New York"},
+                10,
+            )
+
+        self.assertEqual(len(posted_urls), 3)
+        self.assertTrue(photon_calls)
+        self.assertEqual(results, [])
+
+    async def test_photon_rejects_features_outside_resolved_bbox(self):
+        class Response:
+            status_code = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def json(self):
+                return self.body
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data):
+                return Response({"elements": []})
+
+            async def get(self, url, params):
+                if "nominatim" in url:
+                    return Response([])
+                return Response({
+                    "features": [
+                        {
+                            "geometry": {"coordinates": [-74.0, 40.7]},
+                            "properties": {
+                                "name": "Inside Bounds",
+                                "osm_type": "N",
+                                "osm_id": 101,
+                                "osm_key": "shop",
+                                "osm_value": "furniture",
+                            },
+                        },
+                        {
+                            "geometry": {"coordinates": [-73.0, 40.7]},
+                            "properties": {
+                                "name": "Outside Bounds",
+                                "osm_type": "N",
+                                "osm_id": 102,
+                                "osm_key": "shop",
+                                "osm_value": "furniture",
+                            },
+                        },
+                    ],
+                })
+
+        provider = OverpassBusinessSearchProvider(api_url="https://overpass.example")
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            results = await provider.search(
+                "Furniture Stores",
+                {
+                    "latitude": 40.7,
+                    "longitude": -74.0,
+                    "boundingbox": ["40.5", "40.9", "-74.2", "-73.7"],
+                    "city": "New York",
+                },
+                10,
+            )
+
+        self.assertEqual([result["business_name"] for result in results], ["Inside Bounds"])
+
+    async def test_overpass_metadata_hydration_recovers_website_and_email(self):
+        lookup_calls = []
+
+        class Response:
+            status_code = 200
+
+            def __init__(self, body):
+                self.body = body
+
+            def json(self):
+                return self.body
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data):
+                return Response({
+                    "elements": [{
+                        "type": "node",
+                        "id": 12,
+                        "tags": {"name": "Hydrated Studio", "shop": "furniture"},
+                    }],
+                })
+
+            async def get(self, url, params):
+                lookup_calls.append((url, params))
+                return Response([{
+                    "osm_type": "node",
+                    "osm_id": 12,
+                    "extratags": {
+                        "contact:website": "https://hydrated.example",
+                        "contact:email": "hello@hydrated.example",
+                    },
+                }])
+
+        provider = OverpassBusinessSearchProvider(api_url="https://overpass.example")
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            results = await provider.search(
+                "Furniture Stores",
+                {"latitude": 40.7, "longitude": -74.0, "city": "New York"},
+                10,
+            )
+
+        self.assertEqual(lookup_calls[0][0], "https://nominatim.openstreetmap.org/lookup")
+        self.assertEqual(lookup_calls[0][1]["osm_ids"], "N12")
+        self.assertEqual(results[0]["website"], "https://hydrated.example")
+        self.assertEqual(results[0]["email"], "hello@hydrated.example")
+        self.assertTrue(results[0]["email_available"])
+        self.assertEqual(results[0]["contact_source"], "openstreetmap")
+        self.assertEqual(results[0]["provider_id"], "osm:node:12")
+
+    async def test_hydration_never_clears_existing_website_or_email(self):
+        business = {
+            "provider_id": "osm:node:4",
+            "website": "https://existing.example",
+            "email": "existing@example.com",
+            "email_available": True,
+            "_osm_ref": ("node", 4),
+        }
+        with patch(
+            "app.services.business_search.lookup_osm_metadata_by_ids",
+            AsyncMock(return_value={"N4": {"extratags": {}, "address": {}}}),
+        ):
+            hydrated = await hydrate_osm_metadata([business])
+
+        self.assertIs(hydrated[0], business)
+        self.assertEqual(business["website"], "https://existing.example")
+        self.assertEqual(business["email"], "existing@example.com")
+        self.assertTrue(business["email_available"])
+        self.assertEqual(business["contact_source"], "openstreetmap")
+        self.assertNotIn("_osm_ref", business)
+
     async def test_overpass_mapping_preserves_osm_website_and_email(self):
         class Response:
             status_code = 200
@@ -397,9 +699,10 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         location = {"latitude": 40.7, "longitude": -74.0, "city": "New York", "state": "NY", "country": "United States"}
         with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
             with patch("app.services.business_search.OVERPASS_ENDPOINTS", ("https://overpass.example",)):
-                with patch("app.services.business_search.lookup_osm_metadata_by_ids", AsyncMock(return_value={"N:99": {"extratags": {"website": "https://recovered.example", "contact:email": "recovered@example.com"}, "address": {"city": "New York", "state": "New York", "country": "United States"}}})):
+                with patch("app.services.business_search.lookup_osm_metadata_by_ids", AsyncMock(return_value={"N99": {"extratags": {"website": "https://recovered.example", "contact:email": "recovered@example.com"}, "address": {"city": "New York", "state": "New York", "country": "United States"}}})) as lookup_mock:
                     results = await provider.search("Furniture Stores", location, 10)
 
+        lookup_mock.assert_awaited_once_with([("N", 99)])
         self.assertEqual(results[0]["website"], "https://recovered.example")
         self.assertEqual(results[0]["email"], "recovered@example.com")
         self.assertNotIn("_osm_ref", results[0])
@@ -429,8 +732,68 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_overpass_bbox_query_uses_requested_limit_up_to_50(self):
-        query = build_overpass_query_for_bbox("furniture stores", (40.0, -74.1, 41.0, -73.0), 50)
+        query = build_overpass_query("furniture stores", {
+            "latitude": 40.5,
+            "longitude": -73.5,
+            "boundingbox": ["40.0", "41.0", "-74.1", "-73.0"],
+        }, 50)
         self.assertIn("out center tags 50;", query)
+        self.assertIn("(40.0,-74.1,41.0,-73.0)", query)
+        self.assertIn("nwr[shop=furniture]", query)
+        self.assertNotIn("nwr[shop:furniture]", query)
+
+    def test_all_buyer_type_tags_are_retained(self):
+        tags = get_supported_tags("Interior Designers")
+        self.assertGreaterEqual(
+            set(tags),
+            {
+                "craft:interior_design",
+                "office:interior_design",
+                "shop:furniture",
+                "shop:interior_decoration",
+                "shop:decor",
+                "shop:gift",
+                "shop:home_furniture",
+            },
+        )
+
+    def test_exact_category_and_city_score_higher_than_generic_and_outside(self):
+        exact = {
+            "business_name": "Interior Design Firm",
+            "category": "Interior Design",
+            "city": "New York",
+            "state": "NY",
+            "requested_city": "New York",
+            "requested_state": "NY",
+        }
+        generic = {
+            **exact,
+            "business_name": "Local Business",
+            "category": "Business",
+            "city": "Buffalo",
+        }
+        exact_score = score_business(exact, "Interior Designers", [])
+        generic_score = score_business(generic, "Interior Designers", [])
+        self.assertGreater(exact_score, generic_score)
+
+        outside_city = {**exact, "city": "Brooklyn"}
+        self.assertGreater(
+            score_business(exact, "Interior Designers", []),
+            score_business(outside_city, "Interior Designers", []),
+        )
+
+    def test_website_and_email_are_five_point_bonuses(self):
+        base = {
+            "business_name": "Studio",
+            "category": "Business",
+            "city": "New York",
+            "requested_city": "New York",
+        }
+        base_score = score_business(base, "Interior Designers", [])
+        website_score = score_business({**base, "website": "https://studio.example"}, "Interior Designers", [])
+        email_score = score_business({**base, "email": "hello@studio.example"}, "Interior Designers", [])
+        self.assertEqual(website_score - base_score, 5)
+        self.assertEqual(email_score - base_score, 5)
 
 
 if __name__ == "__main__":
