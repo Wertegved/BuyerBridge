@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from threading import Lock
 from typing import Any
 
 import httpx
@@ -19,21 +20,29 @@ class LocationResolver:
 
 
 class NominatimLocationResolver(LocationResolver):
+    _cache: dict[str, dict[str, Any]] = {}
+    _cache_lock = Lock()
+
     def __init__(self, api_url: str | None = None, user_agent: str | None = None, timeout: float = 12.0):
         self.api_url = api_url or settings.GEOCODING_API_URL
         self.user_agent = user_agent or settings.GEOCODING_USER_AGENT
         self.timeout = timeout
-        self._cache: dict[str, dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
 
     async def resolve(self, location: str, country: str) -> dict[str, Any]:
         normalized = (location or "").strip()
         if not normalized:
             raise LocationResolutionError("We couldn't identify that location. Try a city and state such as New York, NY.")
 
-        cache_key = f"{normalized.lower()}|{(country or 'United States').lower()}"
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        cache_key = f"{self.api_url.rstrip('/')}|{normalized.casefold()}|{(country or 'United States').casefold()}"
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return {
+                    **cached,
+                    "boundingbox": list(cached["boundingbox"])
+                    if cached.get("boundingbox") is not None
+                    else None,
+                }
 
         params = {
             "q": normalized,
@@ -75,6 +84,6 @@ class NominatimLocationResolver(LocationResolver):
             "boundingbox": bounding,
         }
 
-        async with self._lock:
+        with self._cache_lock:
             self._cache[cache_key] = resolved
         return resolved
