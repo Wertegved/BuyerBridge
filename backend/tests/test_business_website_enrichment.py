@@ -3,7 +3,12 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from app.routes.search import enrich_buyer_result
-from app.services.business_search import OverpassBusinessSearchProvider, extract_osm_website
+from app.services.business_search import (
+    OverpassBusinessSearchProvider,
+    build_overpass_query_for_bbox,
+    extract_osm_website,
+    score_business,
+)
 from app.services.contact_enrichment import ContactEnrichmentService, FindymailContactEnrichment
 
 
@@ -344,6 +349,88 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buyer["email"], "single@example.com")
         self.assertTrue(buyer["email_available"])
         self.assertEqual(buyer["contact_source"], "findymail")
+
+    async def test_photon_osm_lookup_recovers_website_email_and_keeps_existing_values(self):
+        class PhotonResponse:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {
+                    "features": [
+                        {
+                            "properties": {
+                                "name": "Recovered Studio",
+                                "osm_type": "N",
+                                "osm_id": 99,
+                                "osm_key": "shop",
+                                "osm_value": "furniture",
+                                "city": "New York",
+                                "state": "NY",
+                                "country": "United States",
+                                "osm_tags": {
+                                    "website": "https://recovered.example",
+                                    "contact:email": "recovered@example.com",
+                                },
+                            }
+                        }
+                    ]
+                }
+
+        class AsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, data=None, **kwargs):
+                return type("Response", (), {"status_code": 504, "json": lambda self: {}})()
+
+            async def get(self, url, params=None):
+                return PhotonResponse()
+
+        provider = OverpassBusinessSearchProvider(api_url="https://overpass.example")
+        location = {"latitude": 40.7, "longitude": -74.0, "city": "New York", "state": "NY", "country": "United States"}
+        with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
+            with patch("app.services.business_search.OVERPASS_ENDPOINTS", ("https://overpass.example",)):
+                with patch("app.services.business_search.lookup_osm_metadata_by_ids", AsyncMock(return_value={"N:99": {"extratags": {"website": "https://recovered.example", "contact:email": "recovered@example.com"}, "address": {"city": "New York", "state": "New York", "country": "United States"}}})):
+                    results = await provider.search("Furniture Stores", location, 10)
+
+        self.assertEqual(results[0]["website"], "https://recovered.example")
+        self.assertEqual(results[0]["email"], "recovered@example.com")
+        self.assertNotIn("_osm_ref", results[0])
+
+    def test_relevance_scoring_distinguishes_city_and_category_matches(self):
+        nearby = {
+            "business_name": "Home Goods Supply",
+            "category": "Home Decor",
+            "city": "Brooklyn",
+            "state": "NY",
+            "website": "https://goods.example",
+            "email": "goods@example.com",
+            "requested_city": "New York",
+        }
+        exact = {
+            "business_name": "City Design Studio",
+            "category": "Interior Design",
+            "city": "New York",
+            "state": "NY",
+            "website": "https://design.example",
+            "email": "design@example.com",
+            "requested_city": "New York",
+        }
+        self.assertGreater(
+            score_business(exact, "Interior Designers", ["furniture", "living", "room"]),
+            score_business(nearby, "Interior Designers", ["furniture", "living", "room"]),
+        )
+
+    def test_overpass_bbox_query_uses_requested_limit_up_to_50(self):
+        query = build_overpass_query_for_bbox("furniture stores", (40.0, -74.1, 41.0, -73.0), 50)
+        self.assertIn("out center tags 50;", query)
 
 
 if __name__ == "__main__":

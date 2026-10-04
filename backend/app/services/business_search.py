@@ -18,6 +18,7 @@ OVERPASS_ENDPOINTS = (
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
 PHOTON_REVERSE_URL = "https://photon.komoot.io/reverse"
+PHOTON_FORWARD_URL = "https://photon.komoot.io/api/"
 PHOTON_USER_AGENT = "BuyerBridge/1.0 (buyer discovery application)"
 PHOTON_TAGS_BY_BUYER_TYPE = {
     "interior designers": (
@@ -32,8 +33,20 @@ PHOTON_TAGS_BY_BUYER_TYPE = {
         "office:interior_design",
         "shop:furniture",
         "shop:interior_decoration",
+        "shop:decor",
     ),
-    "furniture stores": ("shop:furniture", "shop:home_furniture"),
+    "interior architecture firms": (
+        "craft:interior_design",
+        "office:interior_design",
+        "shop:furniture",
+        "shop:home_furniture",
+        "shop:interior_decoration",
+        "shop:decor",
+    ),
+    "furniture stores": (
+        "shop:furniture",
+        "shop:home_furniture",
+    ),
     "home decor stores": (
         "shop:decor",
         "shop:interior_decoration",
@@ -41,16 +54,47 @@ PHOTON_TAGS_BY_BUYER_TYPE = {
         "shop:home_furniture",
         "shop:furniture",
     ),
-    "home furnishing retailers": ("shop:home_furniture", "shop:furniture", "shop:decor"),
+    "home furnishing retailers": (
+        "shop:home_furniture",
+        "shop:furniture",
+        "shop:decor",
+        "shop:interior_decoration",
+    ),
     "home staging companies": (
         "craft:interior_design",
         "office:interior_design",
         "shop:furniture",
         "shop:home_furniture",
+        "shop:interior_decoration",
     ),
-    "gift/home stores": ("shop:gift", "shop:decor", "shop:home_furniture"),
-    "gift & home stores": ("shop:gift", "shop:decor", "shop:home_furniture"),
-    "other": ("shop:furniture", "shop:home_furniture", "shop:decor", "shop:gift"),
+    "gift/home stores": (
+        "shop:gift",
+        "shop:decor",
+        "shop:home_furniture",
+        "shop:furniture",
+    ),
+    "gift & home stores": (
+        "shop:gift",
+        "shop:decor",
+        "shop:home_furniture",
+        "shop:furniture",
+    ),
+    "boutique home stores": (
+        "shop:decor",
+        "shop:gift",
+        "shop:home_furniture",
+        "shop:furniture",
+        "shop:interior_decoration",
+    ),
+    "other": (
+        "shop:furniture",
+        "shop:home_furniture",
+        "shop:decor",
+        "shop:gift",
+        "shop:interior_decoration",
+        "craft:interior_design",
+        "office:interior_design",
+    ),
 }
 
 
@@ -116,6 +160,180 @@ def extract_osm_website(tags: dict[str, Any]) -> str | None:
     return extract_osm_tag(tags, ("website", "contact:website", "url", "contact:url"))
 
 
+def _merge_osm_metadata(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    for field, value in (
+        ("website", extract_osm_website(source)),
+        ("contact:website", source.get("contact:website") or source.get("website")),
+        ("url", source.get("url") or source.get("contact:url")),
+        ("contact:url", source.get("contact:url") or source.get("url")),
+        ("email", extract_osm_tag(source, ("email", "contact:email"))),
+        ("contact:email", source.get("contact:email") or source.get("email")),
+        ("phone", extract_osm_tag(source, ("phone", "contact:phone"))),
+        ("contact:phone", source.get("contact:phone") or source.get("phone")),
+        ("address", source.get("address") or source.get("addr:street") or source.get("street")),
+        ("city", source.get("city") or source.get("town") or source.get("village")),
+        ("state", source.get("state") or source.get("county") or source.get("province")),
+        ("country", source.get("country") or source.get("country_code")),
+    ):
+        if value is None:
+            continue
+        if field in {"website", "url", "email", "phone", "address", "city", "state", "country"}:
+            current = target.get(field)
+            if current in (None, ""):
+                target[field] = value
+        elif field.startswith("contact:"):
+            primary_key = field.split(":", 1)[1]
+            current = target.get(primary_key)
+            if current in (None, ""):
+                target[primary_key] = value
+        else:
+            current = target.get(field)
+            if current in (None, ""):
+                target[field] = value
+    if "website" in target and target["website"] in (None, ""):
+        target["website"] = target.get("contact:website") or target.get("url") or target.get("contact:url")
+    if "email" in target and target["email"] in (None, ""):
+        target["email"] = target.get("contact:email")
+    if "phone" in target and target["phone"] in (None, ""):
+        target["phone"] = target.get("contact:phone")
+    return target
+
+
+def normalize_osm_ref(osm_type: Any, osm_id: Any) -> str | None:
+    if osm_id is None:
+        return None
+
+    raw_type = str(osm_type or "").strip().upper()
+    if raw_type in {"NODE", "N"}:
+        prefix = "N"
+    elif raw_type in {"WAY", "W"}:
+        prefix = "W"
+    elif raw_type in {"RELATION", "REL", "R"}:
+        prefix = "R"
+    else:
+        raw_value = str(osm_id).strip().upper()
+        if raw_value and raw_value[0] in {"N", "W", "R"} and raw_value[1:].isdigit():
+            return raw_value
+        return None
+
+    raw_id = str(osm_id).strip()
+    if raw_id.startswith(prefix):
+        normalized = raw_id
+    else:
+        normalized = f"{prefix}{raw_id.lstrip('-') if raw_id.startswith('-') else raw_id}"
+
+    if normalized[1:].isdigit():
+        return normalized
+    return None
+
+
+async def lookup_osm_metadata_by_ids(osm_refs: list[tuple[str, int]]) -> dict[str, dict[str, Any]]:
+    if not osm_refs:
+        return {}
+
+    collected: dict[str, dict[str, Any]] = {}
+    lookup_ids = []
+    for osm_type, osm_id in osm_refs:
+        lookup_ref = normalize_osm_ref(osm_type, osm_id)
+        if lookup_ref:
+            lookup_ids.append(lookup_ref)
+
+    for index in range(0, len(lookup_ids), 50):
+        batch = lookup_ids[index : index + 50]
+        params = {
+            "format": "jsonv2",
+            "addressdetails": 1,
+            "extratags": 1,
+            "namedetails": 1,
+            "osm_ids": ",".join(batch),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=12.0, headers={"User-Agent": PHOTON_USER_AGENT}) as client:
+                if not hasattr(client, "get"):
+                    logger.warning("Nominatim lookup client does not support GET requests.")
+                    continue
+                response = await client.get("https://nominatim.openstreetmap.org/lookup", params=params)
+        except (AttributeError, httpx.HTTPError, TimeoutError) as exc:
+            logger.warning("Nominatim lookup failed: %s", exc, exc_info=True)
+            continue
+
+        if response.status_code != 200:
+            logger.warning("Nominatim lookup returned HTTP status %s", response.status_code)
+            continue
+
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            logger.warning("Nominatim lookup returned invalid JSON: %s", exc, exc_info=True)
+            continue
+
+        if not isinstance(payload, list):
+            continue
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            lookup_key = normalize_osm_ref(item.get("osm_type") or item.get("type") or "", item.get("osm_id") or item.get("id"))
+            if not lookup_key:
+                continue
+            collected[lookup_key] = item
+
+    return collected
+
+
+async def hydrate_osm_metadata(businesses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    osm_refs: list[tuple[str, int]] = []
+    for business in businesses:
+        osm_ref = business.get("_osm_ref")
+        if not isinstance(osm_ref, tuple) or len(osm_ref) != 2 or osm_ref[1] is None:
+            continue
+        osm_refs.append((str(osm_ref[0]), int(osm_ref[1])))
+
+    if not osm_refs:
+        return businesses
+
+    osms_by_id = await lookup_osm_metadata_by_ids(osm_refs)
+    for business in businesses:
+        osm_ref = business.get("_osm_ref")
+        if not isinstance(osm_ref, tuple) or len(osm_ref) != 2:
+            continue
+        lookup_key = normalize_osm_ref(osm_ref[0], osm_ref[1])
+        if not lookup_key:
+            continue
+        matching = osms_by_id.get(lookup_key)
+        if not isinstance(matching, dict):
+            continue
+
+        extratags = matching.get("extratags") or {}
+        address = matching.get("address") or {}
+        metadata_source = {
+            "website": business.get("website") or matching.get("website") or extratags.get("website") or extratags.get("contact:website") or matching.get("url") or extratags.get("url") or extratags.get("contact:url"),
+            "contact:website": extratags.get("contact:website") or matching.get("contact:website") or extratags.get("website") or matching.get("website"),
+            "url": matching.get("url") or extratags.get("url") or extratags.get("contact:url"),
+            "contact:url": extratags.get("contact:url") or matching.get("contact:url") or extratags.get("url") or matching.get("url"),
+            "email": business.get("email") or matching.get("email") or extratags.get("email") or extratags.get("contact:email"),
+            "contact:email": extratags.get("contact:email") or matching.get("contact:email") or matching.get("email") or extratags.get("email"),
+            "phone": business.get("phone") or matching.get("phone") or extratags.get("phone") or extratags.get("contact:phone"),
+            "contact:phone": extratags.get("contact:phone") or matching.get("contact:phone") or matching.get("phone") or extratags.get("phone"),
+            "address": business.get("address") or address.get("road") or address.get("house_number") or matching.get("display_name"),
+            "city": business.get("city") or address.get("city") or address.get("town") or address.get("village"),
+            "state": business.get("state") or address.get("state") or address.get("province"),
+            "country": business.get("country") or address.get("country") or address.get("country_code"),
+        }
+        _merge_osm_metadata(business, metadata_source)
+        if business.get("email"):
+            business["email_available"] = True
+            business["contact_source"] = "openstreetmap"
+        if business.get("address") in (None, "", "Address unavailable"):
+            display_name = matching.get("display_name")
+            if isinstance(display_name, str):
+                business["address"] = display_name.split(",")[0].strip() or business.get("address")
+
+    for business in businesses:
+        business.pop("_osm_ref", None)
+    return businesses
+
+
 def deduplicate_businesses(rows: list[dict]) -> list[dict]:
     seen: set[tuple[str, str]] = set()
     deduped: list[dict] = []
@@ -147,38 +365,124 @@ def deduplicate_businesses(rows: list[dict]) -> list[dict]:
     return deduped
 
 
+STOP_WORDS = {
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "this",
+    "that",
+    "your",
+    "company",
+    "business",
+    "inc",
+    "llc",
+    "ltd",
+}
+
+
+def normalize_text(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    text = re.sub(r"[^a-z0-9\s]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def normalize_keyword_tokens(value: Any) -> list[str]:
+    text = normalize_text(value)
+    if not text:
+        return []
+
+    tokens: list[str] = []
+    for token in text.split():
+        if len(token) <= 2:
+            continue
+        cleaned = token.rstrip("s") if token.endswith("s") and not token.endswith("ss") else token
+        if cleaned in STOP_WORDS:
+            continue
+        tokens.append(cleaned)
+    return tokens
+
+
+def overlap_score(left: list[str], right: list[str]) -> float:
+    if not left or not right:
+        return 0.0
+    left_set = set(left)
+    right_set = set(right)
+    if not left_set or not right_set:
+        return 0.0
+    overlap = len(left_set & right_set)
+    union = len(left_set | right_set)
+    if union == 0:
+        return 0.0
+    return overlap / union
+
+
 def score_business(business: dict, buyer_type: str, product_keywords: list[str]) -> int:
+    buyer_terms = normalize_keyword_tokens(buyer_type)
+    business_name = normalize_text(business.get("business_name"))
+    category_text = normalize_text(business.get("category"))
+    address_text = normalize_text(business.get("address"))
+    city_text = normalize_text(business.get("city"))
+    state_text = normalize_text(business.get("state"))
+    requested_city = normalize_text(business.get("requested_city") or business.get("city"))
+    requested_state = normalize_text(business.get("requested_state"))
+    product_terms = normalize_keyword_tokens(" ".join(product_keywords))
+    name_tokens = normalize_keyword_tokens(business_name)
+    category_tokens = normalize_keyword_tokens(category_text)
+    business_terms = normalize_keyword_tokens(f"{business_name} {category_text} {address_text}")
+
     score = 0
-    normalized_buyer = buyer_type.lower()
-    business_category = (business.get("category") or "").lower()
-    if any(term in normalized_buyer for term in ["designer", "design", "furniture", "decor", "gift", "home"]):
-        score += 30
-    if business_category and any(term in business_category for term in ["furniture", "decor", "home", "gift", "design"]):
-        score += 15
-    if product_keywords:
-        haystack = " ".join(
-            filter(
-                None,
-                [
-                    business.get("business_name") or "",
-                    business.get("category") or "",
-                    business.get("address") or "",
-                ],
-            )
-        ).lower()
-        if any(keyword.lower() in haystack for keyword in product_keywords):
-            score += 20
-    if business.get("city") or business.get("state"):
-        score += 20
+
+    buyer_match = 0.0
+    if buyer_terms:
+        buyer_match = max(
+            overlap_score(buyer_terms, category_tokens),
+            overlap_score(buyer_terms, name_tokens),
+        )
+        if category_text and any(term in category_text for term in buyer_terms):
+            buyer_match = max(buyer_match, 1.0)
+        if buyer_terms and business_name and set(buyer_terms).issubset(set(name_tokens)):
+            buyer_match = max(buyer_match, 0.9)
+    score += int(round(35 * buyer_match))
+
+    product_match = overlap_score(product_terms, business_terms)
+    score += int(round(20 * product_match))
+
+    keyword_match = overlap_score(
+        product_terms,
+        normalize_keyword_tokens(f"{business_name} {category_text} {address_text} {city_text} {state_text}"),
+    )
+    score += int(round(15 * keyword_match))
+
+    name_match = overlap_score(product_terms, name_tokens) if product_terms else 0.0
+    score += int(round(10 * name_match))
+
+    if requested_city and city_text:
+        if city_text == requested_city:
+            score += 10
+        elif requested_state and state_text == requested_state:
+            score += 3
+
     if business.get("website"):
-        score += 10
+        score += 5
     if business.get("email"):
-        score += 20
-    return min(score, 100)
+        score += 5
+
+    return max(0, min(score, 100))
 
 
 def get_supported_tags(buyer_type: str) -> list[str]:
-    return BUYER_TYPE_TAG_MAP.get(buyer_type.lower(), BUYER_TYPE_TAG_MAP["other"])[:3]
+    normalized = (buyer_type or "").strip().lower()
+    tags = PHOTON_TAGS_BY_BUYER_TYPE.get(normalized, PHOTON_TAGS_BY_BUYER_TYPE["other"])
+    deduped: list[str] = []
+    for tag in tags:
+        if tag not in deduped:
+            deduped.append(tag)
+    return deduped
 
 
 def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float], tile_size: float | None = None) -> list[tuple[float, float, float, float]]:
@@ -220,9 +524,9 @@ def build_overpass_query_for_bbox(buyer_type: str, bbox: tuple[float, float, flo
     south, west, north, east = bbox
     tags = get_supported_tags(buyer_type)
     tag_clause = "\n".join([f"nwr[{tag}]({south},{west},{north},{east});" for tag in tags])
-    max_results = max(8, min(limit, 25))
+    max_results = min(max(int(limit), 1), 50)
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:12];
     (
       {tag_clause}
     );
@@ -242,12 +546,12 @@ def build_overpass_query(buyer_type: str, location: dict[str, Any], limit: int) 
         south, north, west, east = [float(value) for value in bbox]
         return build_overpass_query_for_bbox(buyer_type, (south, west, north, east), limit)
 
-    radius = 3000
+    radius = 15000
     tags = get_supported_tags(buyer_type)
     tag_clause = "\n".join([f"nwr[{tag}](around:{radius},{lat},{lon});" for tag in tags])
-    max_results = max(8, min(limit, 25))
+    max_results = min(max(int(limit), 1), 50)
     query = f"""
-    [out:json][timeout:25];
+    [out:json][timeout:12];
     (
       {tag_clause}
     );
@@ -270,10 +574,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
         if latitude is None or longitude is None:
             raise ValueError("Location resolution did not produce usable coordinates.")
 
-        location_without_boundingbox = {
-            key: value for key, value in location.items() if key != "boundingbox"
-        }
-        overpass_query = build_overpass_query(query, location_without_boundingbox, limit)
+        overpass_query = build_overpass_query(query, location, limit)
         logger.info(
             "Overpass buyer search around %s,%s for %s",
             latitude,
@@ -368,6 +669,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     "source": "openstreetmap",
                     "contact_source": None,
                     "relevance_score": 0,
+                    "_osm_ref": (str(element.get("type") or "node"), int(element.get("id"))),
                 }
                 unique_businesses.append(business)
             break
@@ -378,24 +680,29 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                 buyer_type,
                 PHOTON_TAGS_BY_BUYER_TYPE["other"],
             )
+            bbox = location.get("boundingbox") or []
+            photon_limit = min(max(int(limit), 1), 50)
             for osm_tag in photon_tags:
                 params = {
+                    "q": query,
                     "lat": latitude,
                     "lon": longitude,
-                    "radius": 50,
-                    "limit": limit,
+                    "limit": photon_limit,
                     "osm_tag": osm_tag,
+                    "countrycode": "US",
                 }
-                logger.info("Attempting Photon reverse search for OSM tag %s", osm_tag)
+                if len(bbox) == 4:
+                    params["bbox"] = f"{bbox[2]},{bbox[0]},{bbox[3]},{bbox[1]}"
+                logger.info("Attempting Photon forward search for OSM tag %s", osm_tag)
                 try:
                     async with httpx.AsyncClient(
                         timeout=8.0,
                         headers={"User-Agent": PHOTON_USER_AGENT},
                     ) as client:
-                        response = await client.get(PHOTON_REVERSE_URL, params=params)
+                        response = await client.get(PHOTON_FORWARD_URL, params=params)
                 except (httpx.HTTPError, TimeoutError) as exc:
                     logger.warning(
-                        "Photon reverse search for %s failed with %s: %s",
+                        "Photon forward search for %s failed with %s: %s",
                         osm_tag,
                         type(exc).__name__,
                         exc,
@@ -405,7 +712,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
 
                 if response.status_code != 200:
                     logger.warning(
-                        "Photon reverse search for %s returned HTTP status %s",
+                        "Photon forward search for %s returned HTTP status %s",
                         osm_tag,
                         response.status_code,
                     )
@@ -433,6 +740,19 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                     osm_id = properties.get("osm_id")
                     if not name or not osm_type or osm_id is None:
                         continue
+
+                    geometry = feature.get("geometry") if isinstance(feature.get("geometry"), dict) else {}
+                    coordinates = geometry.get("coordinates") if isinstance(geometry, dict) else None
+                    if len(bbox) == 4 and isinstance(coordinates, (list, tuple)) and len(coordinates) >= 2:
+                        try:
+                            feature_lon = float(coordinates[0])
+                            feature_lat = float(coordinates[1])
+                        except (TypeError, ValueError):
+                            continue
+                        south, north, west, east = [float(value) for value in bbox]
+                        if not (south <= feature_lat <= north and west <= feature_lon <= east):
+                            continue
+
                     house_number = properties.get("housenumber")
                     street = properties.get("street")
                     address = " ".join(filter(None, [house_number, street])) or None
@@ -449,9 +769,9 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                             or "Business"
                         ).replace("_", " ").title(),
                         "address": address,
-                        "city": properties.get("city"),
-                        "state": properties.get("state"),
-                        "country": properties.get("country"),
+                        "city": properties.get("city") or location.get("city"),
+                        "state": properties.get("state") or location.get("state"),
+                        "country": properties.get("country") or location.get("country") or "United States",
                         "website": website,
                         "phone": phone,
                         "email": email,
@@ -459,6 +779,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                         "source": "openstreetmap",
                         "contact_source": None,
                         "relevance_score": 0,
+                        "_osm_ref": (str(osm_type), int(osm_id)),
                     }
                     unique_businesses.append(business)
 
@@ -470,6 +791,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
                 "All configured OpenStreetMap Overpass endpoints failed. Check Render logs for details."
             )
 
+        unique_businesses = await hydrate_osm_metadata(unique_businesses)
         deduped = deduplicate_businesses(unique_businesses)
         scored = []
         scoring_context = " ".join(
@@ -488,8 +810,10 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
             if len(piece) > 2
         ]
         for business in deduped:
+            business["requested_city"] = location.get("city") or location.get("display_name")
+            business["requested_state"] = location.get("state")
             business["relevance_score"] = score_business(business, query, keywords)
             scored.append(business)
 
-        scored.sort(key=lambda row: row.get("relevance_score", 0), reverse=True)
-        return scored[:limit]
+        scored.sort(key=lambda row: (-int(row.get("relevance_score", 0)), -int(bool(row.get("requested_city") and normalize_name(row.get("city")) == normalize_name(row.get("requested_city")))), str(row.get("business_name") or "")))
+        return scored[: min(max(int(limit), 1), 50)]
