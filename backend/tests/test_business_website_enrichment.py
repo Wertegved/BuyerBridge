@@ -76,18 +76,19 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
                 if "nominatim" in url:
                     return Response([])
                 photon_requests.append((url, params))
+                features = [{
+                    "geometry": {"coordinates": [-74.0, 40.7]},
+                    "properties": {
+                        "name": "Real Interior Design Studio",
+                        "osm_type": "N",
+                        "osm_id": 42,
+                        "osm_key": "craft",
+                        "osm_value": "interior_design",
+                        "city": "New York",
+                    },
+                }] if params["osm_tag"] == "craft:interior_design" else []
                 return Response({
-                    "features": [{
-                        "geometry": {"coordinates": [-74.0, 40.7]},
-                        "properties": {
-                            "name": "Real Photon Furniture",
-                            "osm_type": "N",
-                            "osm_id": 42,
-                            "osm_key": "shop",
-                            "osm_value": "furniture",
-                            "city": "New York",
-                        },
-                    }],
+                    "features": features,
                 })
 
         provider = OverpassBusinessSearchProvider(api_url="https://overpass.example")
@@ -99,12 +100,13 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
             "state": "NY",
         }
         with patch("app.services.business_search.httpx.AsyncClient", AsyncClient):
-            results = await provider.search("Furniture Stores", location, 10)
+            results = await provider.search("Interior Designers", location, 10)
 
         self.assertTrue(photon_requests)
         self.assertEqual(photon_requests[0][0], "https://photon.komoot.io/api/")
+        self.assertEqual(photon_requests[0][1]["q"], "interior")
         self.assertEqual(photon_requests[0][1]["bbox"], "-74.2,40.5,-73.7,40.9")
-        self.assertEqual(results[0]["business_name"], "Real Photon Furniture")
+        self.assertEqual(results[0]["business_name"], "Real Interior Design Studio")
         self.assertEqual(results[0]["provider_id"], "osm:N:42")
 
     async def test_first_empty_overpass_endpoint_continues_to_second(self):

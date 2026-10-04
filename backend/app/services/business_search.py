@@ -520,6 +520,16 @@ def get_supported_tags(buyer_type: str) -> list[str]:
     return deduped
 
 
+def photon_query_for_tag(osm_tag: str) -> str:
+    _, _, value = osm_tag.partition(":")
+    terms = value.replace("_", " ").split()
+    if "furniture" in terms:
+        return "furniture"
+    if "interior" in terms:
+        return "interior"
+    return " ".join(terms)
+
+
 def split_bbox_into_tiles(bbox: list[float] | tuple[float, float, float, float], tile_size: float | None = None) -> list[tuple[float, float, float, float]]:
     if len(bbox) != 4:
         return []
@@ -728,7 +738,7 @@ class OverpassBusinessSearchProvider(BusinessSearchProvider):
             photon_limit = min(max(int(limit), 1), 50)
             for osm_tag in photon_tags:
                 params = {
-                    "q": query,
+                    "q": photon_query_for_tag(osm_tag),
                     "lat": latitude,
                     "lon": longitude,
                     "limit": photon_limit,
