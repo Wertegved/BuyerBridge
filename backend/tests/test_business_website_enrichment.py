@@ -470,6 +470,30 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["email_available"])
         self.assertEqual(result["contact_source"], "findymail")
 
+    async def test_company_search_domain_and_findymail_email_update_original_result(self):
+        enrichment_service = AsyncMock()
+        enrichment_service.enrich.return_value = {
+            "website": "https://found-domain.example",
+            "email": "person@found-domain.example",
+            "email_available": True,
+            "contact_source": "findymail",
+        }
+        result = {
+            "business_name": "Domain Lookup Studio",
+            "website": None,
+            "email": "osm@original.example",
+            "email_available": True,
+            "contact_source": "openstreetmap",
+        }
+
+        enriched_result = await enrich_buyer_result(result, enrichment_service)
+
+        self.assertIs(enriched_result, result)
+        self.assertEqual(result["website"], "https://found-domain.example")
+        self.assertEqual(result["email"], "person@found-domain.example")
+        self.assertTrue(result["email_available"])
+        self.assertEqual(result["contact_source"], "findymail")
+
     async def test_missing_website_preserves_osm_email_and_phone(self):
         enrichment_service = AsyncMock()
         result = {
@@ -568,6 +592,7 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_no_website_company_searches_domain_then_contact_email(self):
         requests = []
+        request_headers = []
         responses = [
             {"domain": "example.com"},
             {"contacts": [{"email": "PERSON@EXAMPLE.COM"}]},
@@ -594,6 +619,7 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
 
             async def post(self, url, headers, json):
                 requests.append((url, json))
+                request_headers.append(headers)
                 return Response(responses.pop(0))
 
         buyer = {
@@ -615,6 +641,8 @@ class BuyerWebsiteEnrichmentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(requests[0][1], {"name": "Example Studio"})
         self.assertEqual(requests[1][0], FindymailContactEnrichment.API_URL)
         self.assertEqual(requests[1][1]["domain"], "example.com")
+        self.assertEqual(request_headers[0]["Authorization"], "Bearer test-api-key")
+        self.assertEqual(request_headers[1]["Authorization"], "Bearer test-api-key")
         self.assertEqual(result["website"], "https://example.com")
         self.assertEqual(result["email"], "person@example.com")
         self.assertTrue(result["email_available"])

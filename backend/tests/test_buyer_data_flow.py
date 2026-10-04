@@ -95,6 +95,7 @@ class BuyerPersistenceFlowTests(unittest.IsolatedAsyncioTestCase):
                 persisted = database.execute(select(Buyer)).scalar_one()
                 result = response["results"][0]
                 self.assertEqual(result["id"], str(persisted.id))
+                self.assertEqual(discovered["id"], str(persisted.id))
                 self.assertEqual(result["business_name"], "Example Studio")
                 self.assertEqual(result["website"], "https://example.com")
                 self.assertEqual(result["email"], "person@example.com")
@@ -165,3 +166,5 @@ class BuyerIdFilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["buyers"][0]["business_name"], "Latest Studio")
         self.assertEqual(response["buyers"][0]["website"], "https://latest.example")
         self.assertEqual(response["buyers"][0]["email"], "latest@example.com")
+        self.assertTrue(response["buyers"][0]["email_available"])
+        self.assertEqual(response["buyers"][0]["contact_source"], "findymail")

@@ -168,18 +168,20 @@ async def search_buyers(
         )
         database.add(buyer)
         database.flush()
-        persisted_result = serialize_persisted_buyer(
-            buyer,
-            provider_id=result.get("provider_id"),
+        result.update(
+            serialize_persisted_buyer(
+                buyer,
+                provider_id=result.get("provider_id"),
+            )
         )
         logger.info(
             "Buyer persisted: business_name=%s website=%s email=%s contact_source=%s",
-            persisted_result["business_name"],
-            persisted_result["website"],
-            persisted_result["email"],
-            persisted_result["contact_source"],
+            result["business_name"],
+            result["website"],
+            result["email"],
+            result["contact_source"],
         )
-        final_results.append(persisted_result)
+        final_results.append(result)
 
     database.commit()
 
